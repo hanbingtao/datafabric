@@ -486,7 +486,95 @@ public class BootstrapService {
   }
 
   public Map<String, Object> listSqlFunctions() {
-    return Map.of("functions", List.of());
+    List<Map<String, Object>> functions = new ArrayList<>();
+    
+    // 添加基础 SQL 聚合函数
+    addFunction(functions, "COUNT", "AGGREGATE", "COUNT(*)", "COUNT(DISTINCT expression)", "COUNT(expression)");
+    addFunction(functions, "SUM", "AGGREGATE", "SUM(expression)", "SUM(DISTINCT expression)", "");
+    addFunction(functions, "AVG", "AGGREGATE", "AVG(expression)", "AVG(DISTINCT expression)", "");
+    addFunction(functions, "MIN", "AGGREGATE", "MIN(expression)", "", "");
+    addFunction(functions, "MAX", "AGGREGATE", "MAX(expression)", "", "");
+    addFunction(functions, "GROUP_CONCAT", "AGGREGATE", "GROUP_CONCAT(expression, separator)", "", "");
+    addFunction(functions, "LISTAGG", "AGGREGATE", "LISTAGG(expression, separator)", "", "");
+    
+    // 添加字符串函数
+    addFunction(functions, "CONCAT", "STRING", "CONCAT(string1, string2)", "", "");
+    addFunction(functions, "LENGTH", "STRING", "LENGTH(string)", "", "");
+    addFunction(functions, "UPPER", "STRING", "UPPER(string)", "", "");
+    addFunction(functions, "LOWER", "STRING", "LOWER(string)", "", "");
+    addFunction(functions, "TRIM", "STRING", "TRIM(string)", "", "");
+    addFunction(functions, "LTRIM", "STRING", "LTRIM(string)", "", "");
+    addFunction(functions, "RTRIM", "STRING", "RTRIM(string)", "", "");
+    addFunction(functions, "SUBSTRING", "STRING", "SUBSTRING(string, start, length)", "", "");
+    addFunction(functions, "REPLACE", "STRING", "REPLACE(string, from, to)", "", "");
+    addFunction(functions, "REGEXP_MATCHES", "STRING", "REGEXP_MATCHES(string, pattern)", "", "");
+    addFunction(functions, "REGEXP_REPLACE", "STRING", "REGEXP_REPLACE(string, pattern, replacement)", "", "");
+    addFunction(functions, "SPLIT", "STRING", "SPLIT(string, delimiter)", "", "");
+    addFunction(functions, "INITCAP", "STRING", "INITCAP(string)", "", "");
+    addFunction(functions, "LPAD", "STRING", "LPAD(string, length, pad)", "", "");
+    addFunction(functions, "RPAD", "STRING", "RPAD(string, length, pad)", "", "");
+    
+    // 添加日期时间函数
+    addFunction(functions, "CURRENT_DATE", "DATE", "CURRENT_DATE", "", "");
+    addFunction(functions, "CURRENT_TIMESTAMP", "DATE", "CURRENT_TIMESTAMP", "", "");
+    addFunction(functions, "DATE_ADD", "DATE", "DATE_ADD(date, interval)", "", "");
+    addFunction(functions, "DATE_SUB", "DATE", "DATE_SUB(date, interval)", "", "");
+    addFunction(functions, "DATE_DIFF", "DATE", "DATE_DIFF(date1, date2)", "", "");
+    addFunction(functions, "EXTRACT", "DATE", "EXTRACT(unit FROM date)", "", "");
+    addFunction(functions, "NOW", "DATE", "NOW()", "", "");
+    addFunction(functions, "TO_DATE", "DATE", "TO_DATE(string, format)", "", "");
+    addFunction(functions, "TO_CHAR", "DATE", "TO_CHAR(date, format)", "", "");
+    addFunction(functions, "DAY", "DATE", "DAY(date)", "", "");
+    addFunction(functions, "MONTH", "DATE", "MONTH(date)", "", "");
+    addFunction(functions, "YEAR", "DATE", "YEAR(date)", "", "");
+    addFunction(functions, "WEEK", "DATE", "WEEK(date)", "", "");
+    addFunction(functions, "QUARTER", "DATE", "QUARTER(date)", "", "");
+    
+    // 添加数学函数
+    addFunction(functions, "ABS", "NUMERIC", "ABS(number)", "", "");
+    addFunction(functions, "ROUND", "NUMERIC", "ROUND(number, scale)", "", "");
+    addFunction(functions, "FLOOR", "NUMERIC", "FLOOR(number)", "", "");
+    addFunction(functions, "CEIL", "NUMERIC", "CEIL(number)", "", "");
+    addFunction(functions, "SQRT", "NUMERIC", "SQRT(number)", "", "");
+    addFunction(functions, "POWER", "NUMERIC", "POWER(number, exponent)", "", "");
+    addFunction(functions, "MOD", "NUMERIC", "MOD(number, divisor)", "", "");
+    addFunction(functions, "LOG", "NUMERIC", "LOG(number, base)", "", "");
+    addFunction(functions, "LN", "NUMERIC", "LN(number)", "", "");
+    addFunction(functions, "EXP", "NUMERIC", "EXP(number)", "", "");
+    
+    // 添加条件函数
+    addFunction(functions, "CASE", "CONDITIONAL", "CASE WHEN condition THEN result ... END", "", "");
+    addFunction(functions, "COALESCE", "CONDITIONAL", "COALESCE(value, ...)", "", "");
+    addFunction(functions, "NULLIF", "CONDITIONAL", "NULLIF(value1, value2)", "", "");
+    addFunction(functions, "IFNULL", "CONDITIONAL", "IFNULL(value, replacement)", "", "");
+    addFunction(functions, "IF", "CONDITIONAL", "IF(condition, then, else)", "", "");
+    
+    // 添加类型转换函数
+    addFunction(functions, "CAST", "CAST", "CAST(expression AS type)", "", "");
+    addFunction(functions, "TRY_CAST", "CAST", "TRY_CAST(expression AS type)", "", "");
+    addFunction(functions, "TO_VARCHAR", "CAST", "TO_VARCHAR(expression, format)", "", "");
+    addFunction(functions, "TO_NUMBER", "CAST", "TO_NUMBER(string)", "", "");
+    addFunction(functions, "TO_INTEGER", "CAST", "TO_INTEGER(expression)", "", "");
+    addFunction(functions, "TO_BIGINT", "CAST", "TO_BIGINT(expression)", "", "");
+    addFunction(functions, "TO_FLOAT", "CAST", "TO_FLOAT(expression)", "", "");
+    addFunction(functions, "TO_DOUBLE", "CAST", "TO_DOUBLE(expression)", "", "");
+    addFunction(functions, "TO_BOOLEAN", "CAST", "TO_BOOLEAN(expression)", "", "");
+    
+    return Map.of("functions", functions);
+  }
+  
+  private void addFunction(List<Map<String, Object>> functions, String name, String category, String syntax, String distinctSyntax, String alternativeSyntax) {
+    Map<String, Object> func = new LinkedHashMap<>();
+    func.put("name", name);
+    func.put("category", category);
+    func.put("syntax", syntax);
+    if (distinctSyntax != null && !distinctSyntax.isBlank()) {
+      func.put("distinctSyntax", distinctSyntax);
+    }
+    if (alternativeSyntax != null && !alternativeSyntax.isBlank()) {
+      func.put("alternativeSyntax", alternativeSyntax);
+    }
+    functions.add(func);
   }
 
   public Map<String, Object> getDefaultTreeReference() {
