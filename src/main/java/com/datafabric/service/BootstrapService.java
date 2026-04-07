@@ -446,6 +446,19 @@ public class BootstrapService {
                   "rootType", "SOURCE",
                   "state", Map.of("status", "good", "suggestedUserAction", "", "messages", List.of()))));
     }
+    if (showSpaces) {
+      // 添加所有 Space
+      for (SpaceRecord space : SPACES.values()) {
+        resources.add(
+            new LinkedHashMap<>(
+                Map.of(
+                    "id", space.id(),
+                    "type", "SPACE",
+                    "name", space.name(),
+                    "fullPath", List.of(space.name()),
+                    "rootType", "SPACE")));
+      }
+    }
     if (showHomes) {
       resources.add(
           new LinkedHashMap<>(
