@@ -6,7 +6,7 @@ import jakarta.validation.constraints.NotBlank;
 public class ReflectionRequest {
   @NotBlank private String name;
   @NotBlank private String sql;
-  @Min(30) private long refreshIntervalSeconds = 300;
+  private Long refreshIntervalSeconds;
 
   public String getName() {
     return name;
@@ -24,11 +24,11 @@ public class ReflectionRequest {
     this.sql = sql;
   }
 
-  public long getRefreshIntervalSeconds() {
+  public Long getRefreshIntervalSeconds() {
     return refreshIntervalSeconds;
   }
 
-  public void setRefreshIntervalSeconds(long refreshIntervalSeconds) {
+  public void setRefreshIntervalSeconds(Long refreshIntervalSeconds) {
     this.refreshIntervalSeconds = refreshIntervalSeconds;
   }
 }

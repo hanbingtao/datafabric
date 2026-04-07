@@ -9,7 +9,9 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -76,8 +78,10 @@ public class ReflectionService {
       Path path =
           localResultStore.saveReflection(reflection.getId(), result.columns(), result.rows());
       reflection.setMaterializationPath(path.toString());
+      reflection.setColumns(result.columns());
+      reflection.setRows(result.rows());
       reflection.setLastRefreshAt(Instant.now());
-      reflection.setNextRefreshAt(Instant.now().plusSeconds(reflection.getRefreshIntervalSeconds()));
+      reflection.setNextRefreshAt(Instant.now().plusSeconds(reflection.getRefreshIntervalSeconds() != null ? reflection.getRefreshIntervalSeconds() : 3600L));
       reflection.setStatus(ReflectionStatus.ACTIVE);
       reflection.setErrorMessage(null);
     } catch (SQLException | IOException ex) {
@@ -98,5 +102,74 @@ public class ReflectionService {
         refresh(reflection.getId());
       }
     }
+  }
+
+  public ReflectionRecord update(String reflectionId, ReflectionRequest request) {
+    ReflectionRecord reflection = get(reflectionId);
+    if (request.getName() != null && !request.getName().isBlank()) {
+      reflection.setName(request.getName());
+    }
+    if (request.getSql() != null && !request.getSql().isBlank()) {
+      reflection.setSql(request.getSql());
+    }
+    if (request.getRefreshIntervalSeconds() != null) {
+      reflection.setRefreshIntervalSeconds(request.getRefreshIntervalSeconds());
+    }
+    reflection.setStatus(ReflectionStatus.ACTIVE);
+    reflections.put(reflectionId, reflection);
+    return reflection;
+  }
+
+  public void delete(String reflectionId) {
+    ReflectionRecord reflection = get(reflectionId);
+    reflections.remove(reflectionId);
+  }
+
+  public ReflectionRecord enable(String reflectionId) {
+    ReflectionRecord reflection = get(reflectionId);
+    reflection.setStatus(ReflectionStatus.ACTIVE);
+    reflection.setNextRefreshAt(Instant.now());
+    reflections.put(reflectionId, reflection);
+    refresh(reflectionId);
+    return reflection;
+  }
+
+  public ReflectionRecord disable(String reflectionId) {
+    ReflectionRecord reflection = get(reflectionId);
+    reflection.setStatus(ReflectionStatus.DISABLED);
+    reflections.put(reflectionId, reflection);
+    return reflection;
+  }
+
+  public Map<String, Object> getReflectionData(String reflectionId, int offset, int limit) {
+    ReflectionRecord reflection = get(reflectionId);
+    if (reflection.getMaterializationPath() == null) {
+      throw new IllegalStateException("Reflection has no materialized data");
+    }
+    
+    List<String> columns = reflection.getColumns();
+    List<Map<String, Object>> rows = reflection.getRows();
+    
+    if (rows == null || rows.isEmpty()) {
+      return Map.of(
+          "columns", columns,
+          "rows", List.of(),
+          "offset", offset,
+          "limit", limit,
+          "total", 0
+      );
+    }
+    
+    int fromIndex = Math.min(offset, rows.size());
+    int toIndex = Math.min(offset + limit, rows.size());
+    List<Map<String, Object>> pagedRows = new ArrayList<>(rows.subList(fromIndex, toIndex));
+    
+    return Map.of(
+        "columns", columns,
+        "rows", pagedRows,
+        "offset", offset,
+        "limit", limit,
+        "total", rows.size()
+    );
   }
 }

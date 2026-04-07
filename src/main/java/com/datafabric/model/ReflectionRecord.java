@@ -1,6 +1,8 @@
 package com.datafabric.model;
 
 import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 
 public class ReflectionRecord {
   private String id;
@@ -10,9 +12,11 @@ public class ReflectionRecord {
   private Instant createdAt;
   private Instant lastRefreshAt;
   private Instant nextRefreshAt;
-  private long refreshIntervalSeconds;
+  private Long refreshIntervalSeconds;
   private String materializationPath;
   private String errorMessage;
+  private List<String> columns;
+  private List<Map<String, Object>> rows;
 
   public String getId() {
     return id;
@@ -70,11 +74,11 @@ public class ReflectionRecord {
     this.nextRefreshAt = nextRefreshAt;
   }
 
-  public long getRefreshIntervalSeconds() {
+  public Long getRefreshIntervalSeconds() {
     return refreshIntervalSeconds;
   }
 
-  public void setRefreshIntervalSeconds(long refreshIntervalSeconds) {
+  public void setRefreshIntervalSeconds(Long refreshIntervalSeconds) {
     this.refreshIntervalSeconds = refreshIntervalSeconds;
   }
 
@@ -92,5 +96,21 @@ public class ReflectionRecord {
 
   public void setErrorMessage(String errorMessage) {
     this.errorMessage = errorMessage;
+  }
+
+  public List<String> getColumns() {
+    return columns;
+  }
+
+  public void setColumns(List<String> columns) {
+    this.columns = columns;
+  }
+
+  public List<Map<String, Object>> getRows() {
+    return rows;
+  }
+
+  public void setRows(List<Map<String, Object>> rows) {
+    this.rows = rows;
   }
 }
