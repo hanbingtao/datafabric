@@ -1,12 +1,15 @@
 package com.datafabric.controller;
 
 import com.datafabric.dto.JobAndUserStatsResponse;
+import com.datafabric.dto.QueryDetailsResponse;
 import com.datafabric.dto.SettingsRequest;
 import com.datafabric.dto.SettingsWrapperResponse;
 import com.datafabric.dto.SourceListResponse;
+import com.datafabric.dto.SqlRequest;
 import com.datafabric.dto.UserLoginRequest;
 import com.datafabric.dto.UserLoginSessionResponse;
 import com.datafabric.service.BootstrapService;
+import com.datafabric.service.JobService;
 import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -23,9 +26,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/apiv2")
 public class BootstrapController {
   private final BootstrapService bootstrapService;
+  private final JobService jobService;
 
-  public BootstrapController(BootstrapService bootstrapService) {
+  public BootstrapController(BootstrapService bootstrapService, JobService jobService) {
     this.bootstrapService = bootstrapService;
+    this.jobService = jobService;
   }
 
   @GetMapping({"/login", "/login/"})
@@ -103,6 +108,27 @@ public class BootstrapController {
   @GetMapping({"/sql/functions", "/sql/functions/"})
   public Map<String, Object> listSqlFunctions() {
     return bootstrapService.listSqlFunctions();
+  }
+
+  // Jobs 列表端点
+  @GetMapping({"/jobs", "/jobs/"})
+  public Map<String, Object> listJobs(
+      @RequestParam(defaultValue = "0") int offset,
+      @RequestParam(defaultValue = "100") int limit,
+      @RequestParam(required = false) String filter,
+      @RequestParam(required = false) String sort,
+      @RequestParam(required = false) String order) {
+    return bootstrapService.listJobs(offset, limit, filter, sort, order);
+  }
+
+  // SQL 执行端点
+  @PostMapping(value = {"/sql", "/sql/"}, consumes = "application/json")
+  public Map<String, Object> runSql(@RequestBody(required = false) SqlRequest request) {
+    if (request == null || request.getSql() == null || request.getSql().isBlank()) {
+      return Map.of("jobId", Map.of("id", ""), "status", "FAILED", "message", "SQL is required");
+    }
+    String jobId = jobService.submitSql(request.getSql());
+    return Map.of("jobId", Map.of("id", jobId), "status", "SUBMITTED");
   }
 
   @GetMapping({"/trees/-", "/trees/-/"})

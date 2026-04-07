@@ -1703,4 +1703,55 @@ public class BootstrapService {
 
   private record DailyRow(
       String date, long jobCount, long uniqueUsers, long uiRun, long rest, long uiUsers, long restUsers) {}
+
+  public Map<String, Object> listJobs(int offset, int limit, String filter, String sort, String order) {
+    List<JobRecord> allJobs = jobService.listJobs();
+    
+    // Apply filter if provided
+    List<Map<String, Object>> jobList = allJobs.stream()
+        .map(job -> {
+          Map<String, Object> item = new LinkedHashMap<>();
+          item.put("id", job.getId());
+          item.put("jobId", Map.of("id", job.getId()));
+          item.put("state", job.getStatus().name());
+          item.put("jobStatus", job.getStatus().name());
+          item.put("description", truncateSql(job.getSql(), 200));
+          item.put("sql", job.getSql());
+          item.put("startTime", toEpoch(job.getCreatedAt()));
+          item.put("endTime", toEpoch(job.getCompletedAt()));
+          item.put("outputRecords", job.getRowCount() == null ? 0L : job.getRowCount());
+          item.put("queryType", "UI_RUN");
+          item.put("accelerated", false);
+          return item;
+        })
+        .toList();
+
+    // Apply pagination
+    int fromIndex = Math.min(offset, jobList.size());
+    int toIndex = Math.min(offset + limit, jobList.size());
+    List<Map<String, Object>> pagedJobs = fromIndex < jobList.size() 
+        ? jobList.subList(fromIndex, toIndex) 
+        : List.of();
+
+    return Map.of(
+        "jobs", pagedJobs,
+        "total", jobList.size(),
+        "offset", offset,
+        "limit", limit
+    );
+  }
+
+  private long toEpoch(Instant instant) {
+    return instant == null ? 0L : instant.toEpochMilli();
+  }
+
+  private String truncateSql(String sql, int maxLength) {
+    if (sql == null || sql.isBlank()) {
+      return "";
+    }
+    if (maxLength <= 0 || sql.length() <= maxLength) {
+      return sql;
+    }
+    return sql.substring(0, maxLength) + "...";
+  }
 }
