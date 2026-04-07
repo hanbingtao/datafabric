@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+
+    Copyright (C) 2017-2019 Dremio Corporation
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+-->
+<project xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd" xmlns="http://maven.apache.org/POM/4.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>com.dremio</groupId>
+    <artifactId>dremio-dac-parent</artifactId>
+    <version>26.0.5-202509091642240013-f5051a07</version>
+  </parent>
+  <artifactId>dremio-ui-common</artifactId>
+  <version>26.0.5-202509091642240013-f5051a07</version>
+  <name>Dremio UI Common</name>
+  <dependencies>
+    <dependency>
+      <groupId>com.dremio</groupId>
+      <artifactId>dremio-ui-lib</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.dremio</groupId>
+      <artifactId>dremio-ui-design-system</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.dremio</groupId>
+      <artifactId>dremio-js</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+  </dependencies>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>com.mycila</groupId>
+        <artifactId>license-maven-plugin</artifactId>
+        <configuration>
+          <licenseSets>
+            <licenseSet>
+              <excludes combine.children="append">
+                <exclude>**/.antlr/*</exclude>
+                <exclude>.prettierignore</exclude>
+                <exclude>Makefile</exclude>
+              </excludes>
+            </licenseSet>
+          </licenseSets>
+          <mapping>
+            <run>SCRIPT_STYLE</run>
+            <g4>SLASHSTAR_STYLE</g4>
+          </mapping>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>com.github.eirslett</groupId>
+        <artifactId>frontend-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>install node and npm</id>
+            <phase>initialize</phase>
+            <goals>
+              <goal>install-node-and-pnpm</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>pnpm install</id>
+            <phase>initialize</phase>
+            <goals>
+              <goal>pnpm</goal>
+            </goals>
+            <configuration>
+              <arguments>${pnpm.installscript}</arguments>
+            </configuration>
+          </execution>
+          <execution>
+            <id>test</id>
+            <phase>test</phase>
+            <goals>
+              <goal>pnpm</goal>
+            </goals>
+            <configuration>
+              <environmentVariables>
+                <JEST_JUNIT_OUTPUT_DIR>${project.build.directory}/jest-reports</JEST_JUNIT_OUTPUT_DIR>
+                <JEST_JUNIT_OUTPUT_NAME>test-results.xml</JEST_JUNIT_OUTPUT_NAME>
+                <JEST_SUITE_NAME>ui-common</JEST_SUITE_NAME>
+              </environmentVariables>
+              <arguments>run test --ci --reporters=jest-silent-reporter --reporters=summary --reporters=jest-junit</arguments>
+              <skip>${skipTests}</skip>
+            </configuration>
+          </execution>
+          <execution>
+            <id>build</id>
+            <phase>compile</phase>
+            <goals>
+              <goal>pnpm</goal>
+            </goals>
+            <configuration>
+              <arguments>run prepack</arguments>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <artifactId>maven-clean-plugin</artifactId>
+        <configuration>
+          <skip>${skip.uiclean}</skip>
+          <filesets>
+            <fileset>
+              <directory>${project.basedir}/node_modules</directory>
+              <followSymlinks>false</followSymlinks>
+            </fileset>
+            <fileset>
+              <directory>${project.basedir}</directory>
+              <includes>
+                <include>dist-*/</include>
+              </includes>
+              <followSymlinks>false</followSymlinks>
+            </fileset>
+            <fileset>
+              <directory>${project.basedir}/src</directory>
+              <includes>
+                <include>**/__tests__/**/*.actual.json</include>
+              </includes>
+              <followSymlinks>false</followSymlinks>
+            </fileset>
+          </filesets>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

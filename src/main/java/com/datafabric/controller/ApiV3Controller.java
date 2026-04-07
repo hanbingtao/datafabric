@@ -49,11 +49,27 @@ public class ApiV3Controller {
     return new ApiV3ListResponse<>(bootstrapService.listCatalogRoot());
   }
 
+  @PostMapping({"/catalog", "/catalog/"})
+  public Map<String, Object> createCatalog(@RequestBody(required = false) Map<String, Object> request) {
+    return bootstrapService.createCatalog(request == null ? Map.of() : request);
+  }
+
   @GetMapping("/catalog/{id}")
   public Map<String, Object> getCatalogById(
       @PathVariable String id,
       @RequestParam(required = false) Integer maxChildren) {
     return bootstrapService.getCatalogById(id, maxChildren);
+  }
+
+  @PutMapping("/catalog/{id}")
+  public Map<String, Object> updateCatalog(
+      @PathVariable String id, @RequestBody(required = false) Map<String, Object> request) {
+    return bootstrapService.updateCatalog(id, request == null ? Map.of() : request);
+  }
+
+  @DeleteMapping("/catalog/{id}")
+  public void deleteCatalog(@PathVariable String id) {
+    bootstrapService.deleteCatalog(id);
   }
 
   @GetMapping({"/catalog/by-path/{segment:.*}", "/catalog/by-path/{segment:.*}/"})

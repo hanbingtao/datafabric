@@ -47,6 +47,12 @@ public class BootstrapController {
     return bootstrapService.listSources(includeDatasetCount);
   }
 
+  @PostMapping({"/sources/isMetadataImpacting", "/sources/isMetadataImpacting/"})
+  public Map<String, Object> isMetadataImpacting(
+      @RequestBody(required = false) Map<String, Object> body) {
+    return bootstrapService.isMetadataImpacting(body == null ? Map.of() : body);
+  }
+
   @GetMapping({"/home/{homeName}", "/home/{homeName}/"})
   public Map<String, Object> getHome(
       @PathVariable String homeName,
@@ -59,6 +65,20 @@ public class BootstrapController {
       @PathVariable String sourceName,
       @RequestParam(defaultValue = "true") boolean includeContents) {
     return bootstrapService.getSource(sourceName, includeContents);
+  }
+
+  @PutMapping({"/source/{sourceName}", "/source/{sourceName}/"})
+  public Map<String, Object> saveSource(
+      @PathVariable String sourceName,
+      @RequestBody(required = false) Map<String, Object> body) {
+    return bootstrapService.saveSource(sourceName, body == null ? Map.of() : body);
+  }
+
+  @GetMapping({"/space/{spaceName}", "/space/{spaceName}/"})
+  public Map<String, Object> getSpace(
+      @PathVariable String spaceName,
+      @RequestParam(defaultValue = "true") boolean includeContents) {
+    return bootstrapService.getSpace(spaceName, includeContents);
   }
 
   @GetMapping({"/resourcetree", "/resourcetree/"})

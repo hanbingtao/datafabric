@@ -25,11 +25,16 @@ public class DatasetCompatibilityService {
 
   private final MetadataService metadataService;
   private final JobService jobService;
+  private final ClickHouseSourceService clickHouseSourceService;
   private final ConcurrentMap<String, PreviewState> previewStates = new ConcurrentHashMap<>();
 
-  public DatasetCompatibilityService(MetadataService metadataService, JobService jobService) {
+  public DatasetCompatibilityService(
+      MetadataService metadataService,
+      JobService jobService,
+      ClickHouseSourceService clickHouseSourceService) {
     this.metadataService = metadataService;
     this.jobService = jobService;
+    this.clickHouseSourceService = clickHouseSourceService;
   }
 
   public Map<String, Object> createUntitledSql(
@@ -93,10 +98,14 @@ public class DatasetCompatibilityService {
   }
 
   public Map<String, Object> getDatasetSummary(String path) throws SQLException {
-    String tableName = normalizeTableName(path);
-    DatasetSummaryResponse summary = metadataService.getDatasetSummary(tableName);
+    DatasetPath datasetPath = parseDatasetPath(path);
+    DatasetSummaryResponse summary =
+        datasetPath.isClickHouse()
+            ? metadataService.getDatasetSummary(
+                datasetPath.sourceName(), datasetPath.databaseName(), datasetPath.tableName())
+            : metadataService.getDatasetSummary(datasetPath.tableName());
     Map<String, Object> response = new LinkedHashMap<>();
-    response.put("fullPath", List.of("Samples", tableName));
+    response.put("fullPath", datasetPath.fullPath());
     response.put("jobCount", 0);
     response.put("descendants", 0);
     response.put("datasetType", "PHYSICAL_DATASET");
@@ -123,8 +132,14 @@ public class DatasetCompatibilityService {
     response.put(
         "links",
         Map.of(
-            "self", "/source/Samples/dataset/" + tableName,
-            "query", "/new_query?context=Samples"));
+            "self", "/source/" + String.join("/", datasetPath.fullPath()),
+            "query",
+            datasetPath.isClickHouse()
+                ? "/new_query?context="
+                    + datasetPath.sourceName()
+                    + "."
+                    + datasetPath.databaseName()
+                : "/new_query?context=Samples"));
     return response;
   }
 
@@ -132,19 +147,41 @@ public class DatasetCompatibilityService {
       throws SQLException, IOException {
     PreviewState state = previewStates.get(version);
     String effectivePath = state == null ? path : state.datasetPath();
-    String effectiveDisplayPath = state == null ? "tmp / UNTITLED" : state.displayPath();
-    String effectiveSql = state == null ? "SELECT * FROM " + normalizeTableName(path) : state.sql();
-    List<String> effectiveContext = state == null ? List.of("Samples") : state.context();
+    DatasetPath datasetPath = parseDatasetPath(effectivePath);
+    String effectiveDisplayPath =
+        state == null ? String.join(" / ", datasetPath.fullPath()) : state.displayPath();
+    String effectiveSql =
+        state == null ? defaultPreviewSql(datasetPath) : state.sql();
+    List<String> effectiveContext =
+        state == null ? defaultContext(datasetPath) : state.context();
     String tableName = resolvePreviewTableName(effectivePath, effectiveSql);
-    DatasetSummaryResponse summary = metadataService.getDatasetSummary(tableName);
+    DatasetSummaryResponse summary =
+        datasetPath.isClickHouse()
+            ? metadataService.getDatasetSummary(
+                datasetPath.sourceName(), datasetPath.databaseName(), datasetPath.tableName())
+            : metadataService.getDatasetSummary(tableName);
     List<Map<String, Object>> columns = toColumns(summary);
     Map<String, Object> jobRef = null;
 
-    if (state != null && state.jobId() != null && !state.jobId().isBlank()) {
-      JobRecord job = jobService.getJob(state.jobId());
-      jobRef = Map.of("id", state.jobId());
+    String jobId = state == null ? null : state.jobId();
+    if (jobId == null && datasetPath.isClickHouse()) {
+      jobId = jobService.submitSql(effectiveSql);
+      previewStates.put(
+          version,
+          new PreviewState(
+              version,
+              effectivePath,
+              effectiveDisplayPath,
+              effectiveSql,
+              List.copyOf(effectiveContext),
+              jobId));
+    }
+
+    if (jobId != null && !jobId.isBlank()) {
+      JobRecord job = jobService.getJob(jobId);
+      jobRef = Map.of("id", jobId);
       if (job.getStatus() == JobStatus.COMPLETED) {
-        JobDataResponse response = jobService.getJobData(state.jobId(), 0, 1);
+        JobDataResponse response = jobService.getJobData(jobId, 0, 1);
         if (response.getColumns() != null && !response.getColumns().isEmpty()) {
           columns = toColumns(response.getColumns());
         }
@@ -155,16 +192,16 @@ public class DatasetCompatibilityService {
     dataset.put("id", version);
     dataset.put("entityId", "tmp-" + version);
     dataset.put("datasetVersion", version);
-    dataset.put("fullPath", List.of("tmp", "UNTITLED"));
+    dataset.put("fullPath", datasetPath.fullPath());
     dataset.put("displayFullPath", effectiveDisplayPath);
-    dataset.put("datasetType", "VIRTUAL_DATASET");
-    dataset.put("canReapply", false);
-    dataset.put("isNewQuery", true);
+    dataset.put("datasetType", datasetPath.isClickHouse() ? "PHYSICAL_DATASET" : "VIRTUAL_DATASET");
+    dataset.put("canReapply", !datasetPath.isClickHouse());
+    dataset.put("isNewQuery", !datasetPath.isClickHouse());
     dataset.put("sql", effectiveSql);
     dataset.put("context", effectiveContext == null || effectiveContext.isEmpty() ? List.of("Samples") : effectiveContext);
     dataset.put("approximate", false);
     dataset.put("tipVersion", version);
-    dataset.put("apiLinks", Map.of("self", "/dataset/tmp.UNTITLED/version/" + version));
+    dataset.put("apiLinks", Map.of("self", "/dataset/" + String.join(".", datasetPath.fullPath()) + "/version/" + version));
     dataset.put(
         "links",
         Map.of(
@@ -177,7 +214,7 @@ public class DatasetCompatibilityService {
     }
     if (jobRef != null) {
       dataset.put("jobId", jobRef);
-      dataset.put("paginationUrl", "/job/" + state.jobId() + "/data");
+      dataset.put("paginationUrl", "/job/" + jobId + "/data");
     }
 
     Map<String, Object> response = new LinkedHashMap<>();
@@ -196,6 +233,48 @@ public class DatasetCompatibilityService {
     return parts[parts.length - 1].toUpperCase();
   }
 
+  private String defaultPreviewSql(DatasetPath datasetPath) {
+    if (datasetPath.isClickHouse()) {
+      return "SELECT * FROM "
+          + quoteIdentifier(datasetPath.sourceName())
+          + "."
+          + quoteIdentifier(datasetPath.databaseName())
+          + "."
+          + quoteIdentifier(datasetPath.tableName())
+          + " LIMIT 50";
+    }
+    return "SELECT * FROM " + normalizeTableName(String.join(".", datasetPath.fullPath()));
+  }
+
+  private List<String> defaultContext(DatasetPath datasetPath) {
+    if (datasetPath.isClickHouse()) {
+      return List.of(datasetPath.sourceName(), datasetPath.databaseName());
+    }
+    return List.of("Samples");
+  }
+
+  private String quoteIdentifier(String value) {
+    return "\"" + value.replace("\"", "\"\"") + "\"";
+  }
+
+  private DatasetPath parseDatasetPath(String path) {
+    if (path == null || path.isBlank()) {
+      return new DatasetPath(false, "Samples", "PUBLIC", "SALES_FACT", List.of("Samples", "SALES_FACT"));
+    }
+    String normalized = path.replace("\"", "").replace("%22", "").replace('/', '.');
+    String[] parts = normalized.split("\\.");
+    if (parts.length >= 3 && clickHouseSourceService.isClickHouseSource(parts[0])) {
+      return new DatasetPath(
+          true,
+          parts[0],
+          parts[1],
+          parts[2],
+          List.of(parts[0], parts[1], parts[2]));
+    }
+    String tableName = parts[parts.length - 1].toUpperCase();
+    return new DatasetPath(false, "Samples", "PUBLIC", tableName, List.of("Samples", tableName));
+  }
+
   private String resolvePreviewTableName(String path, String sql) {
     Matcher matcher = FROM_PATTERN.matcher(sql == null ? "" : sql);
     if (matcher.find()) {
@@ -206,11 +285,12 @@ public class DatasetCompatibilityService {
 
   private List<Map<String, Object>> toColumns(DatasetSummaryResponse summary) {
     List<Map<String, Object>> columns = new ArrayList<>();
-    for (DatasetSummaryResponse.ColumnInfo column : summary.getColumns()) {
+    for (int index = 0; index < summary.getColumns().size(); index++) {
+      DatasetSummaryResponse.ColumnInfo column = summary.getColumns().get(index);
       Map<String, Object> entry = new LinkedHashMap<>();
       entry.put("name", column.name());
       entry.put("type", column.type());
-      entry.put("index", 0);
+      entry.put("index", index);
       columns.add(entry);
     }
     return columns;
@@ -235,4 +315,11 @@ public class DatasetCompatibilityService {
       String sql,
       List<String> context,
       String jobId) {}
+
+  private record DatasetPath(
+      boolean isClickHouse,
+      String sourceName,
+      String databaseName,
+      String tableName,
+      List<String> fullPath) {}
 }

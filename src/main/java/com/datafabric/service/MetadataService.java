@@ -13,9 +13,12 @@ import org.springframework.stereotype.Service;
 @Service
 public class MetadataService {
   private final DataSource dataSource;
+  private final ClickHouseSourceService clickHouseSourceService;
 
-  public MetadataService(DataSource dataSource) {
+  public MetadataService(
+      DataSource dataSource, ClickHouseSourceService clickHouseSourceService) {
     this.dataSource = dataSource;
+    this.clickHouseSourceService = clickHouseSourceService;
   }
 
   public List<String> listDatasets() throws SQLException {
@@ -47,5 +50,10 @@ public class MetadataService {
       }
       return new DatasetSummaryResponse(tableName, columnInfos);
     }
+  }
+
+  public DatasetSummaryResponse getDatasetSummary(
+      String sourceName, String databaseName, String tableName) throws SQLException {
+    return clickHouseSourceService.getDatasetSummary(sourceName, databaseName, tableName);
   }
 }

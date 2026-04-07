@@ -81,23 +81,43 @@ public class SqlRunnerCompatibilityController {
     return ResponseEntity.noContent().build();
   }
 
-  @GetMapping({"/sql-runner/session", "/sql-runner/session/"})
+  @GetMapping({
+    "/sql-runner/session",
+    "/sql-runner/session/",
+    "/apiv2/sql-runner/session",
+    "/apiv2/sql-runner/session/"
+  })
   public SqlRunnerSessionResponse getSession() {
     return sqlRunnerCompatibilityService.getSession();
   }
 
-  @PutMapping({"/sql-runner/session", "/sql-runner/session/"})
+  @PutMapping({
+    "/sql-runner/session",
+    "/sql-runner/session/",
+    "/apiv2/sql-runner/session",
+    "/apiv2/sql-runner/session/"
+  })
   public SqlRunnerSessionResponse updateSession(
       @RequestBody(required = false) SqlRunnerSessionResponse request) {
     return sqlRunnerCompatibilityService.updateSession(request);
   }
 
-  @PutMapping({"/sql-runner/session/tabs/{scriptId}", "/sql-runner/session/tabs/{scriptId}/"})
+  @PutMapping({
+    "/sql-runner/session/tabs/{scriptId}",
+    "/sql-runner/session/tabs/{scriptId}/",
+    "/apiv2/sql-runner/session/tabs/{scriptId}",
+    "/apiv2/sql-runner/session/tabs/{scriptId}/"
+  })
   public SqlRunnerSessionResponse addTab(@PathVariable String scriptId) {
     return sqlRunnerCompatibilityService.addTab(scriptId);
   }
 
-  @DeleteMapping({"/sql-runner/session/tabs/{scriptId}", "/sql-runner/session/tabs/{scriptId}/"})
+  @DeleteMapping({
+    "/sql-runner/session/tabs/{scriptId}",
+    "/sql-runner/session/tabs/{scriptId}/",
+    "/apiv2/sql-runner/session/tabs/{scriptId}",
+    "/apiv2/sql-runner/session/tabs/{scriptId}/"
+  })
   public ResponseEntity<Void> deleteTab(@PathVariable String scriptId) {
     sqlRunnerCompatibilityService.deleteTab(scriptId);
     return ResponseEntity.noContent().build();

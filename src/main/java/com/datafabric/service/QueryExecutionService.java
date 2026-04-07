@@ -20,12 +20,19 @@ public class QueryExecutionService {
       Pattern.compile("(?i)(?:\"?Samples\"?\\.)\"?([A-Za-z0-9_]+)\"?");
 
   private final DataSource dataSource;
+  private final ClickHouseSourceService clickHouseSourceService;
 
-  public QueryExecutionService(DataSource dataSource) {
+  public QueryExecutionService(
+      DataSource dataSource, ClickHouseSourceService clickHouseSourceService) {
     this.dataSource = dataSource;
+    this.clickHouseSourceService = clickHouseSourceService;
   }
 
   public QueryResult execute(String sql) throws SQLException {
+    var externalResult = clickHouseSourceService.tryExecuteQualifiedSql(sql);
+    if (externalResult.isPresent()) {
+      return externalResult.get();
+    }
     String normalizedSql = normalizeSql(sql);
     try (Connection connection = dataSource.getConnection();
         Statement statement = connection.createStatement()) {

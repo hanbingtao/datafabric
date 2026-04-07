@@ -1,0 +1,146 @@
+/*
+ * Copyright (C) 2017-2019 Dremio Corporation
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+:root {
+  --dremio--default--dark--mode: #b8bcc2;
+  --dremio--hover--dark--mode: #80dfe3;
+  --dremio--color--pale--navy: #e4f2f7;
+}
+
+:root {
+  --color--cyan--25: #f1fafb;
+  --color--cyan--50: #e9f5f9;
+  --color--cyan--75: #d1eef3;
+  --color--cyan--100: #c6e9ef;
+  --color--cyan--150: #b4e3e9;
+  --color--cyan--200: #8ed4df;
+  --color--cyan--250: #26c8d1;
+  --color--cyan--300: #43b8c9;
+  --color--cyan--400: #2e92a1;
+  --color--cyan--450: #008489;
+  --color--cyan--500: #206771;
+  --color--cyan--600: #285056;
+  --color--cyan--700: #14373c;
+  --color--cyan--800: #0d2528;
+
+  --color--gray--25: #fbfbfb;
+  --color--gray--50: #f6f7f8;
+  --color--gray--75: #eeeff1;
+  --color--gray--100: #e4e6e9;
+  --color--gray--150: #d2d6da;
+  --color--gray--200: #b0b7bf;
+  --color--gray--300: #939da7;
+  --color--gray--400: #7b8288;
+  --color--gray--500: #505862;
+  --color--gray--600: #454c52;
+  --color--gray--700: #32383e;
+  --color--gray--800: #202124;
+  --color--gray--900: #101214;
+
+  --color--red--50: #fdeded;
+  --color--red--200: #ff7575;
+  --color--red--300: #ff5252;
+  --color--red--400: #ca3f32;
+  --color--red--500: #ad3021;
+  --color--red--700: #3b2626;
+
+  --color--orange--50: #fff4e5;
+  --color--orange--150: #ffb85d;
+  --color--orange--200: #ffa940;
+  --color--orange--900: #443728;
+
+  --color--green--50: #edf7ed;
+  --color--green--200: #8bd282;
+  --color--green--300: #5abd4a;
+  --color--green--700: #293a2a;
+
+  --color--blue--50: #e9f5f9;
+  --color--blue--300: #5ab3ff;
+  --color--blue--400: #0684f9;
+  --color--blue--700: #1c3146;
+
+  --color--navy--500: #485767;
+  --color--navy--700: #2a394a;
+
+  --color--indigo--300: #8ca4e9;
+  --color--indigo--500: #6c6da4;
+  --color--indigo--700: #47498d;
+  --color--indigo-vivid--500: #5a5dee;
+
+  /* Avatar Colors */
+  --color--orange-warm--300: #f79472;
+  --color--violet-warm--500: #9a51bf;
+  --color--red-cool--500: #d02362;
+  --color--blue-warm--300: #3b84cb;
+  --color--magenta--300: #cc88ae;
+  --color--mint--300: #64c5bf;
+}
+
+/**
+ * Semantic color aliases
+ */
+:root {
+  --color--brand--25: var(--color--cyan--25);
+  --color--brand--50: var(--color--cyan--50);
+  --color--brand--75: var(--color--cyan--75);
+  --color--brand--100: var(--color--cyan--100);
+  --color--brand--150: var(--color--cyan--150);
+  --color--brand--200: var(--color--cyan--200);
+  --color--brand--250: var(--color--cyan--250);
+  --color--brand--300: var(--color--cyan--300);
+  --color--brand--400: var(--color--cyan--400);
+  --color--brand--450: var(--color--cyan--450);
+  --color--brand--500: var(--color--cyan--500);
+  --color--brand--600: var(--color--cyan--600);
+  --color--brand--700: var(--color--cyan--700);
+  --color--brand--800: var(--color--cyan--800);
+
+  --color--neutral--25: var(--color--gray--25);
+  --color--neutral--50: var(--color--gray--50);
+  --color--neutral--75: var(--color--gray--75);
+  --color--neutral--100: var(--color--gray--100);
+  --color--neutral--150: var(--color--gray--150);
+  --color--neutral--200: var(--color--gray--200);
+  --color--neutral--300: var(--color--gray--300);
+  --color--neutral--500: var(--color--gray--500);
+  --color--neutral--400: var(--color--gray--400);
+  --color--neutral--600: var(--color--gray--600);
+  --color--neutral--700: var(--color--gray--700);
+  --color--neutral--800: var(--color--gray--800);
+  --color--neutral--900: var(--color--gray--900);
+
+  --color--danger--50: var(--color--red--50);
+  --color--danger--200: var(--color--red--200);
+  --color--danger--300: var(--color--red--300);
+  --color--danger--400: var(--color--red--400);
+  --color--danger--500: var(--color--red--500);
+  --color--danger--700: var(--color--red--700);
+
+  --color--warning--50: var(--color--orange--50);
+  --color--warning--150: var(--color--orange--150);
+  --color--warning--200: var(--color--orange--200);
+  --color--warning--900: var(--color--orange--900);
+
+  --color--success--50: var(--color--green--50);
+  --color--success--200: var(--color--green--200);
+  --color--success--300: var(--color--green--300);
+  --color--success--700: var(--color--green--700);
+
+  --color--info--50: var(--color--blue--50);
+  --color--info--300: var(--color--blue--300);
+  --color--info--400: var(--color--blue--400);
+  --color--info--700: var(--color--blue--700);
+}

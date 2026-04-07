@@ -14,6 +14,11 @@ import com.datafabric.dto.SourceTypeTemplateResponse;
 import com.datafabric.dto.UserPreferenceResponse;
 import com.datafabric.dto.UserLoginRequest;
 import com.datafabric.dto.UserLoginSessionResponse;
+import com.datafabric.config.DatafabricProperties;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
+import java.io.IOException;
 import com.datafabric.model.JobRecord;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -29,22 +34,52 @@ import java.util.UUID;
 import java.util.NoSuchElementException;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import org.springframework.stereotype.Service;
 
 @Service
 public class BootstrapService {
   private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ISO_LOCAL_DATE;
-  private final Map<String, CollaborationWikiResponse> wikiStore = new ConcurrentHashMap<>();
-  private final Map<String, CollaborationTagResponse> tagStore = new ConcurrentHashMap<>();
+  private static final Map<String, CollaborationWikiResponse> WIKI_STORE = new ConcurrentHashMap<>();
+  private static final Map<String, CollaborationTagResponse> TAG_STORE = new ConcurrentHashMap<>();
+  private static final Map<String, SpaceRecord> SPACES = new ConcurrentHashMap<>();
+  private static final Map<String, SourceRecord> SOURCES = new ConcurrentHashMap<>();
+  private static final Map<String, SourceRecord> SOURCES_BY_NAME = new ConcurrentHashMap<>();
+  private static final Map<String, FolderRecord> FOLDERS = new ConcurrentHashMap<>();
+  private static final Map<String, FileFormatRecord> FILE_FORMATS = new ConcurrentHashMap<>();
+  private static final TypeReference<SourceRecord> SOURCE_RECORD_TYPE = new TypeReference<>() {};
 
   private final JobService jobService;
   private final MetadataService metadataService;
+  private final ClickHouseSourceService clickHouseSourceService;
+  private final DatafabricProperties properties;
+  private final ObjectMapper objectMapper;
 
-  public BootstrapService(JobService jobService, MetadataService metadataService) {
+  public BootstrapService(
+      JobService jobService,
+      MetadataService metadataService,
+      ClickHouseSourceService clickHouseSourceService,
+      DatafabricProperties properties,
+      ObjectMapper objectMapper) {
     this.jobService = jobService;
     this.metadataService = metadataService;
+    this.clickHouseSourceService = clickHouseSourceService;
+    this.properties = properties;
+    this.objectMapper = objectMapper;
+  }
+
+  @PostConstruct
+  void loadPersistedState() throws IOException {
+    Files.createDirectories(sourceStoreDir());
+    for (Path file : listSourceFiles()) {
+      SourceRecord record = objectMapper.readValue(Files.newInputStream(file), SOURCE_RECORD_TYPE);
+      SOURCES.put(record.id(), record);
+      SOURCES_BY_NAME.put(record.name().toLowerCase(), record);
+    }
   }
 
   public UserLoginSessionResponse getDefaultSession() {
@@ -70,37 +105,20 @@ public class BootstrapService {
   }
 
   public SourceListResponse listSources(boolean includeDatasetCount) {
-    SourceListResponse.SourceInfo source = new SourceListResponse.SourceInfo();
-    source.setType("H2");
-    source.setName("Samples");
-    source.setCtime(Instant.now().minusSeconds(7200).toEpochMilli());
-    source.setId(UUID.nameUUIDFromBytes("Samples".getBytes()).toString());
-    source.setTag("datafabric-source-tag");
-    source.setResourcePath("/source/Samples");
-    source.setFullPathList(List.of("Samples"));
-    source.setLinks(
-        Map.of(
-            "self", "/source/Samples",
-            "jobs", "/jobs",
-            "query", "/new_query"));
-    source.setState(Map.of("status", "good", "suggestedUserAction", "", "messages", List.of()));
-    source.setConfig(Map.of("engine", "H2", "rootPath", "/", "allowCrossSourceSelection", false));
-    source.setMetadataPolicy(
-        Map.of(
-            "updateMode", "PREFETCH_QUERIED",
-            "namesRefreshMillis", 3600000,
-            "datasetDefinitionRefreshAfterMillis", 3600000,
-            "datasetDefinitionExpireAfterMillis", 10800000,
-            "authTTLMillis", 86400000,
-            "autoPromoteDatasets", true));
-    if (includeDatasetCount) {
-      try {
-        source.setNumberOfDatasets(metadataService.listDatasets().size());
-      } catch (Exception ex) {
-        source.setNumberOfDatasets(1);
-      }
-    }
-    return new SourceListResponse(List.of(source));
+    List<SourceListResponse.SourceInfo> allSources = new ArrayList<>();
+    allSources.add(toSourceInfo(defaultSampleSource(), includeDatasetCount));
+    allSources.addAll(
+        SOURCES.values().stream()
+            .sorted((left, right) -> left.createdAt().compareTo(right.createdAt()))
+            .map(source -> toSourceInfo(source, includeDatasetCount))
+            .toList());
+    return new SourceListResponse(allSources);
+  }
+
+  public Map<String, Object> isMetadataImpacting(Map<String, Object> request) {
+    // 当前后端还没有真实元数据血缘和反射清理能力，这里先兼容前端预检查接口，
+    // 统一按“非 metadata impacting”返回，保证编辑 source 的主流程可继续执行。
+    return Map.of("isMetadataImpacting", false);
   }
 
   public Map<String, Object> getServerStatus() {
@@ -166,78 +184,252 @@ public class BootstrapService {
                 "links", links));
 
     if (includeContents) {
-      home.put(
-          "contents",
-          Map.of(
-              "datasets", List.of(),
-              "files", List.of(),
-              "folders", List.of(),
-              "physicalDatasets", List.of(),
-              "functions", List.of(),
-              "canTagsBeSkipped", false,
-              "isFileSystemSource", false,
-              "isImpersonationEnabled", false));
+      home.put("contents", folderContents("home", normalized, null));
     }
 
     return home;
   }
 
   public Map<String, Object> getSource(String sourceName, boolean includeContents) {
-    if (!"Samples".equalsIgnoreCase(sourceName)) {
-      throw new NoSuchElementException("Source not found: " + sourceName);
-    }
-
-    Map<String, Object> source = new LinkedHashMap<>();
-    source.put("id", samplesSourceCatalogItem().getId());
-    source.put("name", "Samples");
-    source.put("fullPathList", List.of("Samples"));
-    source.put("resourcePath", "/source/Samples");
-    source.put("type", "H2");
-    source.put("tag", "datafabric-source-tag");
-    source.put("description", "Datafabric sample source");
-    source.put("ctime", Instant.now().minusSeconds(7200).toEpochMilli());
-    source.put("numberOfDatasets", 1);
-    source.put("datasetCountBounded", false);
-    source.put(
-        "links",
-        Map.of(
-            "self", "/source/Samples",
-            "rename", "/source/Samples/rename",
-            "jobs", "/jobs",
-            "format", "/source/Samples/folder_format",
-            "file_preview", "/source/Samples/file_preview",
-            "file_format", "/source/Samples/file_format"));
-    source.put(
-        "state",
-        Map.of(
-            "status", "good",
-            "suggestedUserAction", "",
-            "messages", List.of()));
-    source.put("config", Map.of("engine", "H2", "rootPath", "/", "allowCrossSourceSelection", false));
-    source.put("metadataPolicy", samplesSourceEntity(1).get("metadataPolicy"));
-    source.put("accelerationRefreshPeriod", 3600000);
-    source.put("accelerationGracePeriod", 3600000);
-    source.put("accelerationRefreshSchedule", "0 0 8 * * *");
-    source.put("accelerationActivePolicyType", "PERIOD");
-    source.put("accelerationNeverExpire", false);
-    source.put("accelerationNeverRefresh", false);
-    source.put("allowCrossSourceSelection", false);
-    source.put("disableMetadataValidityCheck", false);
-    source.put("sourceChangeState", "NONE");
+    SourceRecord sourceRecord = findSourceByName(sourceName);
+    Map<String, Object> source = sourceEntity(sourceRecord);
     if (includeContents) {
-      source.put(
-          "contents",
-          Map.of(
-              "datasets", List.of(),
-              "files", List.of(),
-              "folders", List.of(),
-              "physicalDatasets", List.of(),
-              "functions", List.of(),
-              "canTagsBeSkipped", false,
-              "isFileSystemSource", false,
-              "isImpersonationEnabled", false));
+      source.put("contents", folderContents("source", sourceName, null));
     }
     return source;
+  }
+
+  public Map<String, Object> saveSource(String sourceName, Map<String, Object> body) {
+    String requestedName = normalizeString(body.get("name"));
+    String finalName = requestedName.isBlank() ? sourceName : requestedName;
+    String type = normalizeString(body.get("type"));
+    if (finalName.isBlank()) {
+      throw new IllegalArgumentException("Source name is required");
+    }
+    if (type.isBlank()) {
+      throw new IllegalArgumentException("Source type is required");
+    }
+
+    SourceRecord existing = findSourceByNameOrNull(sourceName);
+    ensureSourceNameAvailable(finalName, existing == null ? null : existing.id());
+
+    Instant createdAt = existing == null ? Instant.now() : existing.createdAt();
+    String id = existing == null ? UUID.randomUUID().toString() : existing.id();
+    String tag = "source-" + Instant.now().toEpochMilli();
+    String description =
+        body != null && body.containsKey("description")
+            ? normalizeString(body.get("description"))
+            : existing == null ? "" : existing.description();
+    Map<String, Object> config = extractMap(body.get("config"));
+    Map<String, Object> metadataPolicy = extractMap(body.get("metadataPolicy"));
+
+    SourceRecord updated =
+        new SourceRecord(
+            id,
+            finalName,
+            type,
+            description,
+            tag,
+            createdAt,
+            config,
+            metadataPolicy);
+    if (existing != null) {
+      SOURCES.remove(existing.id());
+      SOURCES_BY_NAME.remove(existing.name().toLowerCase());
+    }
+    SOURCES.put(updated.id(), updated);
+    SOURCES_BY_NAME.put(updated.name().toLowerCase(), updated);
+    savePersistedSource(updated);
+    return sourceEntity(updated);
+  }
+
+  public void deleteSource(String sourceName, String version) {
+    SourceRecord existing = findSourceByName(sourceName);
+    if (version != null && !version.isBlank() && !Objects.equals(version, existing.tag())) {
+      throw new IllegalArgumentException("Source version does not match current tag");
+    }
+    SOURCES.remove(existing.id());
+    SOURCES_BY_NAME.remove(existing.name().toLowerCase());
+    deletePersistedSource(existing.name());
+  }
+
+  public Map<String, Object> renameSource(String sourceName, String renameTo) {
+    SourceRecord existing = findSourceByName(sourceName);
+    String newName = normalizeString(renameTo);
+    if (newName.isBlank()) {
+      throw new IllegalArgumentException("Source name is required");
+    }
+    ensureSourceNameAvailable(newName, existing.id());
+    SourceRecord updated =
+        new SourceRecord(
+            existing.id(),
+            newName,
+            existing.type(),
+            existing.description(),
+            "source-" + Instant.now().toEpochMilli(),
+            existing.createdAt(),
+            existing.config(),
+            existing.metadataPolicy());
+    SOURCES.put(updated.id(), updated);
+    SOURCES_BY_NAME.remove(existing.name().toLowerCase());
+    SOURCES_BY_NAME.put(updated.name().toLowerCase(), updated);
+    deletePersistedSource(existing.name());
+    savePersistedSource(updated);
+    return sourceEntity(updated);
+  }
+
+  public Map<String, Object> getLegacyUser(String userName) {
+    ApiUserResponse user = getUserByName(userName);
+    return new LinkedHashMap<>(
+        Map.of(
+            "id", user.getId(),
+            "name", user.getName(),
+            "userName", user.getName(),
+            "firstName", user.getFirstName(),
+            "lastName", user.getLastName(),
+            "email", user.getEmail(),
+            "tag", user.getTag(),
+            "active", Boolean.TRUE.equals(user.getActive())));
+  }
+
+  public Map<String, Object> getFolder(
+      String rootType, String rootName, String path, boolean includeContents) {
+    if ("source".equals(rootType) && clickHouseSourceService.isClickHouseSource(rootName)) {
+      return clickHouseFolderEntity(rootName, path, includeContents);
+    }
+    FolderRecord folder = requireFolder(rootType, rootName, path);
+    return folderEntity(folder, includeContents);
+  }
+
+  public Map<String, Object> createFolder(
+      String rootType, String rootName, String parentPath, Map<String, Object> request) {
+    validateRoot(rootType, rootName);
+    String folderName = normalizeString(request.get("name"));
+    if (folderName.isBlank()) {
+      throw new IllegalArgumentException("Folder name is required");
+    }
+    String normalizedParent = normalizePath(parentPath);
+    String fullPath = normalizedParent.isBlank() ? folderName : normalizedParent + "/" + folderName;
+    String key = folderKey(rootType, rootName, fullPath);
+    if (FOLDERS.containsKey(key)) {
+      throw new IllegalArgumentException("Folder already exists: " + fullPath);
+    }
+    FolderRecord folder =
+        new FolderRecord(
+            UUID.randomUUID().toString(),
+            rootType,
+            rootName,
+            fullPath,
+            folderName,
+            "folder-" + Instant.now().toEpochMilli(),
+            Instant.now(),
+            normalizeString(request.get("storageUri")));
+    FOLDERS.put(key, folder);
+    return folderEntity(folder, false);
+  }
+
+  public Map<String, Object> updateFolder(
+      String rootType, String rootName, String path, Map<String, Object> request) {
+    FolderRecord existing = requireFolder(rootType, rootName, path);
+    String requestedName = normalizeString(request.get("name"));
+    String nextName = requestedName.isBlank() ? existing.name() : requestedName;
+    String nextStorageUri =
+        request.containsKey("storageUri")
+            ? normalizeString(request.get("storageUri"))
+            : existing.storageUri();
+    String parentPath = parentPath(existing.relativePath());
+    String nextRelativePath = parentPath.isBlank() ? nextName : parentPath + "/" + nextName;
+    renameFolderTree(existing, nextRelativePath, nextName, nextStorageUri);
+    return folderEntity(requireFolder(rootType, rootName, nextRelativePath), false);
+  }
+
+  public void deleteFolder(String rootType, String rootName, String path, String version) {
+    FolderRecord existing = requireFolder(rootType, rootName, path);
+    if (version != null && !version.isBlank() && !Objects.equals(version, existing.tag())) {
+      throw new IllegalArgumentException("Folder version does not match current tag");
+    }
+    String prefix = folderKey(rootType, rootName, existing.relativePath()) + "/";
+    boolean hasChildren = FOLDERS.keySet().stream().anyMatch(key -> key.startsWith(prefix));
+    if (hasChildren) {
+      throw new IllegalArgumentException("nessie_catalog:folder_is_not_empty");
+    }
+    FOLDERS.remove(folderKey(rootType, rootName, existing.relativePath()));
+  }
+
+  public Map<String, Object> getFileFormat(
+      String rootType, String rootName, String path, boolean folderFormat) {
+    validateRoot(rootType, rootName);
+    return fileFormatEntity(fileFormatRecord(rootType, rootName, path, folderFormat));
+  }
+
+  public Map<String, Object> saveFileFormat(
+      String rootType,
+      String rootName,
+      String path,
+      boolean folderFormat,
+      Map<String, Object> request) {
+    validateRoot(rootType, rootName);
+    FileFormatRecord existing = fileFormatRecord(rootType, rootName, path, folderFormat);
+    String type = normalizeString(request.get("type"));
+    if (type.isBlank()) {
+      type = existing.type();
+    }
+    FileFormatRecord updated =
+        new FileFormatRecord(
+            existing.id(),
+            rootType,
+            rootName,
+            normalizePath(path),
+            folderFormat,
+            type.isBlank() ? "JSON" : type,
+            "format-" + Instant.now().toEpochMilli(),
+            mergeMaps(existing.payload(), request));
+    FILE_FORMATS.put(fileFormatKey(rootType, rootName, path, folderFormat), updated);
+    return fileFormatEntity(updated);
+  }
+
+  public void deleteFileFormat(
+      String rootType, String rootName, String path, boolean folderFormat, String version) {
+    FileFormatRecord existing = fileFormatRecord(rootType, rootName, path, folderFormat);
+    if (version != null && !version.isBlank() && !Objects.equals(version, existing.version())) {
+      throw new IllegalArgumentException("File format version does not match current version");
+    }
+    FILE_FORMATS.remove(fileFormatKey(rootType, rootName, path, folderFormat));
+  }
+
+  public Map<String, Object> previewFileFormat(
+      String rootType, String rootName, String path, Map<String, Object> request) {
+    validateRoot(rootType, rootName);
+    String location =
+        normalizePath(path).isBlank() ? rootName : rootName + "/" + normalizePath(path);
+    return Map.of(
+        "columns",
+        List.of(
+            Map.of("name", "path", "type", "VARCHAR"),
+            Map.of("name", "type", "type", "VARCHAR"),
+            Map.of("name", "preview", "type", "VARCHAR")),
+        "rows",
+        List.of(
+            Map.of(
+                "path", location,
+                "type", normalizeString(request.get("type")).isBlank() ? "JSON" : normalizeString(request.get("type")),
+                "preview", "datafabric preview")),
+        "rowCount",
+        1);
+  }
+
+  public Map<String, Object> getSpace(String spaceName, boolean includeContents) {
+    SpaceRecord space =
+        SPACES.values().stream()
+            .filter(item -> item.name().equalsIgnoreCase(spaceName))
+            .findFirst()
+            .orElseThrow(() -> new NoSuchElementException("Space not found: " + spaceName));
+
+    Map<String, Object> entity = new LinkedHashMap<>(spaceEntity(space, 100));
+    if (!includeContents) {
+      entity.remove("contents");
+    }
+    return entity;
   }
 
   public Map<String, Object> getResourceTree(
@@ -337,15 +529,35 @@ public class BootstrapService {
   }
 
   public List<CatalogItemResponse> listCatalogRoot() {
-    return List.of(homeCatalogItem(), samplesSourceCatalogItem());
+    List<CatalogItemResponse> root = new ArrayList<>();
+    root.add(homeCatalogItem());
+    // 前端根目录依赖 HOME/SPACE/SOURCE 混合返回，这里把内存中的空间节点也挂进去。
+    root.addAll(SPACES.values().stream()
+        .sorted((left, right) -> left.createdAt().compareTo(right.createdAt()))
+        .map(this::spaceCatalogItem)
+        .toList());
+    root.add(samplesSourceCatalogItem());
+    root.addAll(SOURCES.values().stream()
+        .sorted((left, right) -> left.createdAt().compareTo(right.createdAt()))
+        .map(this::sourceCatalogItem)
+        .toList());
+    return root;
   }
 
   public Map<String, Object> getCatalogById(String id, Integer maxChildren) {
     if (samplesSourceCatalogItem().getId().equals(id)) {
       return samplesSourceEntity(maxChildren);
     }
+    SourceRecord source = SOURCES.get(id);
+    if (source != null) {
+      return sourceCatalogEntity(source, maxChildren);
+    }
     if (homeCatalogItem().getId().equals(id)) {
       return homeEntity(maxChildren);
+    }
+    SpaceRecord space = SPACES.get(id);
+    if (space != null) {
+      return spaceEntity(space, maxChildren);
     }
     if (salesFactDatasetEntity().get("id").equals(id)) {
       return salesFactDatasetEntity();
@@ -360,15 +572,85 @@ public class BootstrapService {
     if (path.size() == 1 && "Samples".equalsIgnoreCase(path.get(0))) {
       return samplesSourceEntity(maxChildren);
     }
+    if (path.size() == 1) {
+      SourceRecord source = findSourceByNameOrNull(path.get(0));
+      if (source != null) {
+        return sourceCatalogEntity(source, maxChildren);
+      }
+    }
     if (path.size() == 1 && "@datafabric".equalsIgnoreCase(path.get(0))) {
       return homeEntity(maxChildren);
+    }
+    if (path.size() == 1) {
+      return SPACES.values().stream()
+          .filter(space -> space.name().equalsIgnoreCase(path.get(0)))
+          .findFirst()
+          .map(space -> spaceEntity(space, maxChildren))
+          .orElseGet(() -> missingCatalogPath(path));
     }
     if (path.size() == 2
         && "Samples".equalsIgnoreCase(path.get(0))
         && "SALES_FACT".equalsIgnoreCase(path.get(1))) {
       return salesFactDatasetEntity();
     }
-    throw new NoSuchElementException("Catalog path not found: " + path);
+    return missingCatalogPath(path);
+  }
+
+  public Map<String, Object> createCatalog(Map<String, Object> request) {
+    String entityType = normalizeString(request.get("entityType"));
+    if (!"space".equalsIgnoreCase(entityType)) {
+      throw new IllegalArgumentException("Only entityType=space is currently supported");
+    }
+
+    String name = normalizeString(request.get("name"));
+    if (name.isBlank()) {
+      throw new IllegalArgumentException("Space name is required");
+    }
+    if (name.startsWith("@")) {
+      throw new IllegalArgumentException("Space name cannot start with '@'");
+    }
+    ensureSpaceNameAvailable(name, null);
+
+    Instant now = Instant.now();
+    SpaceRecord space =
+        new SpaceRecord(
+            UUID.randomUUID().toString(),
+            name,
+            normalizeString(request.get("description")),
+            "space-" + now.toEpochMilli(),
+            now);
+    // 当前只做单机演示，因此空间元数据保存在进程内存中。
+    SPACES.put(space.id(), space);
+    return spaceEntity(space, 100);
+  }
+
+  public Map<String, Object> updateCatalog(String id, Map<String, Object> request) {
+    SpaceRecord existing = requireSpace(id);
+    String requestedName = normalizeString(request.get("name"));
+    String name = requestedName.isBlank() ? existing.name() : requestedName;
+    ensureSpaceNameAvailable(name, id);
+
+    String description =
+        request != null && request.containsKey("description")
+            ? normalizeString(request.get("description"))
+            : existing.description();
+
+    SpaceRecord updated =
+        new SpaceRecord(
+            existing.id(),
+            name,
+            description,
+            "space-" + Instant.now().toEpochMilli(),
+            existing.createdAt());
+    SPACES.put(updated.id(), updated);
+    return spaceEntity(updated, 100);
+  }
+
+  public void deleteCatalog(String id) {
+    if (SPACES.remove(id) != null) {
+      return;
+    }
+    throw new NoSuchElementException("Catalog entity not found: " + id);
   }
 
   public ScriptListResponse listScripts(int maxResults, String search, String createdBy) {
@@ -426,19 +708,19 @@ public class BootstrapService {
   }
 
   public CollaborationWikiResponse getWiki(String id) {
-    return wikiStore.computeIfAbsent(id, key -> defaultWiki());
+    return WIKI_STORE.computeIfAbsent(id, key -> defaultWiki());
   }
 
   public CollaborationWikiResponse saveWiki(String id, CollaborationWikiResponse wiki) {
     long nextVersion = getWiki(id).getVersion() == null ? 0L : getWiki(id).getVersion() + 1L;
     CollaborationWikiResponse updated =
         new CollaborationWikiResponse(wiki == null ? "" : wiki.getText(), nextVersion);
-    wikiStore.put(id, updated);
+    WIKI_STORE.put(id, updated);
     return updated;
   }
 
   public CollaborationTagResponse getTags(String id) {
-    return tagStore.computeIfAbsent(id, key -> new CollaborationTagResponse(List.of(), null));
+    return TAG_STORE.computeIfAbsent(id, key -> new CollaborationTagResponse(List.of(), null));
   }
 
   public CollaborationTagResponse saveTags(String id, CollaborationTagResponse tags) {
@@ -446,7 +728,7 @@ public class BootstrapService {
         new CollaborationTagResponse(
             tags == null || tags.getTags() == null ? List.of() : tags.getTags(),
             "v" + System.currentTimeMillis());
-    tagStore.put(id, updated);
+    TAG_STORE.put(id, updated);
     return updated;
   }
 
@@ -540,6 +822,29 @@ public class BootstrapService {
     return item;
   }
 
+  private CatalogItemResponse spaceCatalogItem(SpaceRecord space) {
+    CatalogItemResponse item = new CatalogItemResponse();
+    item.setId(space.id());
+    item.setPath(List.of(space.name()));
+    item.setType("CONTAINER");
+    item.setContainerType("SPACE");
+    item.setTag(space.tag());
+    item.setCreatedAt(space.createdAt().toEpochMilli());
+    return item;
+  }
+
+  private CatalogItemResponse sourceCatalogItem(SourceRecord source) {
+    CatalogItemResponse item = new CatalogItemResponse();
+    item.setId(source.id());
+    item.setPath(List.of(source.name()));
+    item.setType("CONTAINER");
+    item.setContainerType("SOURCE");
+    item.setTag(source.tag());
+    item.setCreatedAt(source.createdAt().toEpochMilli());
+    item.setSourceChangeState("NONE");
+    return item;
+  }
+
   private CatalogItemResponse salesFactCatalogItem() {
     CatalogItemResponse item = new CatalogItemResponse();
     item.setId("22222222-2222-2222-2222-222222222222");
@@ -558,6 +863,30 @@ public class BootstrapService {
     entity.put("name", "@datafabric");
     entity.put("children", List.of());
     entity.put("nextPageToken", null);
+    return entity;
+  }
+
+  private Map<String, Object> spaceEntity(SpaceRecord space, Integer maxChildren) {
+    Map<String, Object> entity = new LinkedHashMap<>();
+    // 这个结构同时服务 v3 catalog 和旧版 apiv2/space 详情页，字段尽量向前端常用形态靠齐。
+    entity.put("entityType", "space");
+    entity.put("id", space.id());
+    entity.put("name", space.name());
+    entity.put("description", space.description());
+    entity.put("tag", space.tag());
+    entity.put("containerType", "SPACE");
+    entity.put("type", "CONTAINER");
+    entity.put("path", List.of(space.name()));
+    entity.put("fullPathList", List.of(space.name()));
+    entity.put("resourcePath", "/space/" + space.name());
+    entity.put("urlPath", "/space/" + space.name());
+    entity.put("createdAt", space.createdAt().toEpochMilli());
+    entity.put("ctime", space.createdAt().toEpochMilli());
+    entity.put("contents", emptyContents());
+    entity.put("links", Map.of("self", "/space/" + space.name(), "jobs", "/jobs", "query", "/new_query"));
+    entity.put("children", List.of());
+    entity.put("nextPageToken", null);
+    entity.put("stats", Map.of("datasetCount", 0, "datasetCountBounded", false));
     return entity;
   }
 
@@ -599,6 +928,315 @@ public class BootstrapService {
     return entity;
   }
 
+  private Map<String, Object> sourceCatalogEntity(SourceRecord source, Integer maxChildren) {
+    Map<String, Object> entity = new LinkedHashMap<>();
+    entity.put("entityType", "source");
+    entity.put("id", source.id());
+    entity.put("name", source.name());
+    entity.put("tag", source.tag());
+    entity.put("type", source.type());
+    entity.put("createdAt", source.createdAt().toEpochMilli());
+    entity.put("description", source.description());
+    entity.put("state", Map.of("status", "good", "suggestedUserAction", "", "messages", List.of()));
+    entity.put("config", source.config().isEmpty() ? Map.of("engine", source.type()) : source.config());
+    entity.put("metadataPolicy", source.metadataPolicy().isEmpty() ? defaultMetadataPolicy() : source.metadataPolicy());
+    entity.put("accelerationActivePolicyType", "PERIOD");
+    entity.put("accelerationGracePeriodMs", 3600000);
+    entity.put("accelerationRefreshPeriodMs", 3600000);
+    entity.put("accelerationRefreshSchedule", "0 0 8 * * *");
+    entity.put("accelerationNeverExpire", false);
+    entity.put("accelerationNeverRefresh", false);
+    entity.put("allowCrossSourceSelection", false);
+    entity.put("disableMetadataValidityCheck", false);
+    entity.put("sourceChangeState", "NONE");
+    entity.put("children", List.of());
+    entity.put("nextPageToken", null);
+    return entity;
+  }
+
+  private Map<String, Object> sourceEntity(SourceRecord sourceRecord) {
+    Map<String, Object> source = new LinkedHashMap<>();
+    source.put("id", sourceRecord.id());
+    source.put("name", sourceRecord.name());
+    source.put("fullPathList", List.of(sourceRecord.name()));
+    source.put("resourcePath", "/source/" + sourceRecord.name());
+    source.put("type", sourceRecord.type());
+    source.put("tag", sourceRecord.tag());
+    source.put("description", sourceRecord.description());
+    source.put("ctime", sourceRecord.createdAt().toEpochMilli());
+    source.put("numberOfDatasets", 0);
+    source.put("datasetCountBounded", false);
+    source.put(
+        "links",
+        Map.of(
+            "self", "/source/" + sourceRecord.name(),
+            "rename", "/source/" + sourceRecord.name() + "/rename",
+            "jobs", "/jobs",
+            "format", "/source/" + sourceRecord.name() + "/folder_format",
+            "file_preview", "/source/" + sourceRecord.name() + "/file_preview",
+            "file_format", "/source/" + sourceRecord.name() + "/file_format"));
+    source.put("state", Map.of("status", "good", "suggestedUserAction", "", "messages", List.of()));
+    source.put("config", sourceRecord.config().isEmpty() ? Map.of("engine", sourceRecord.type()) : sourceRecord.config());
+    source.put("metadataPolicy", sourceRecord.metadataPolicy().isEmpty() ? defaultMetadataPolicy() : sourceRecord.metadataPolicy());
+    source.put("accelerationRefreshPeriod", 3600000);
+    source.put("accelerationGracePeriod", 3600000);
+    source.put("accelerationRefreshSchedule", "0 0 8 * * *");
+    source.put("accelerationActivePolicyType", "PERIOD");
+    source.put("accelerationNeverExpire", false);
+    source.put("accelerationNeverRefresh", false);
+    source.put("allowCrossSourceSelection", false);
+    source.put("disableMetadataValidityCheck", false);
+    source.put("sourceChangeState", "NONE");
+    source.put("contents", folderContents("source", sourceRecord.name(), null));
+    return source;
+  }
+
+  private Map<String, Object> emptyContents() {
+    return Map.of(
+        "datasets", List.of(),
+        "files", List.of(),
+        "folders", List.of(),
+        "physicalDatasets", List.of(),
+        "functions", List.of(),
+        "canTagsBeSkipped", false,
+        "isFileSystemSource", false,
+        "isImpersonationEnabled", false);
+  }
+
+  private Map<String, Object> folderContents(String rootType, String rootName, String path) {
+    if ("source".equals(rootType) && clickHouseSourceService.isClickHouseSource(rootName)) {
+      return clickHouseContents(rootName, path);
+    }
+    String normalizedPath = normalizePath(path);
+    List<Map<String, Object>> folders =
+        FOLDERS.values().stream()
+            .filter(folder -> folder.rootType().equals(rootType))
+            .filter(folder -> folder.rootName().equalsIgnoreCase(rootName))
+            .filter(folder -> Objects.equals(parentPath(folder.relativePath()), normalizedPath))
+            .sorted((left, right) -> left.name().compareToIgnoreCase(right.name()))
+            .map(folder -> folderEntity(folder, false))
+            .toList();
+    return Map.of(
+        "datasets", List.of(),
+        "files", List.of(),
+        "folders", folders,
+        "physicalDatasets", List.of(),
+        "functions", List.of(),
+        "canTagsBeSkipped", false,
+        "isFileSystemSource", "source".equals(rootType),
+        "isImpersonationEnabled", false);
+  }
+
+  private Map<String, Object> clickHouseContents(String sourceName, String path) {
+    try {
+      String normalizedPath = normalizePath(path);
+      if (normalizedPath.isBlank()) {
+        List<Map<String, Object>> folders =
+            clickHouseSourceService.listDatabases(sourceName).stream()
+                .map(database -> clickHouseDatabaseFolder(sourceName, database, false))
+                .toList();
+        return Map.of(
+            "datasets", List.of(),
+            "files", List.of(),
+            "folders", folders,
+            "physicalDatasets", List.of(),
+            "functions", List.of(),
+            "canTagsBeSkipped", false,
+            "isFileSystemSource", false,
+            "isImpersonationEnabled", false);
+      }
+
+      List<Map<String, Object>> datasets =
+          clickHouseSourceService.listTables(sourceName, normalizedPath).stream()
+              .map(table -> clickHousePhysicalDataset(sourceName, normalizedPath, table))
+              .toList();
+      return Map.of(
+          "datasets", List.of(),
+          "files", List.of(),
+          "folders", List.of(),
+          "physicalDatasets", datasets,
+          "functions", List.of(),
+          "canTagsBeSkipped", false,
+          "isFileSystemSource", false,
+          "isImpersonationEnabled", false);
+    } catch (Exception ex) {
+      return emptyContents();
+    }
+  }
+
+  private Map<String, Object> clickHouseFolderEntity(
+      String sourceName, String databaseName, boolean includeContents) {
+    Map<String, Object> entity = clickHouseDatabaseFolder(sourceName, normalizePath(databaseName), includeContents);
+    if (includeContents) {
+      entity.put("contents", clickHouseContents(sourceName, databaseName));
+    }
+    return entity;
+  }
+
+  private Map<String, Object> clickHouseDatabaseFolder(
+      String sourceName, String databaseName, boolean includeContents) {
+    String normalizedDatabase = normalizePath(databaseName);
+    Map<String, Object> entity = new LinkedHashMap<>();
+    entity.put("id", sourceName + ":" + normalizedDatabase);
+    entity.put("name", normalizedDatabase);
+    entity.put("fileSystemFolder", false);
+    entity.put("file", false);
+    entity.put("queryable", false);
+    entity.put("isPhysicalDataset", false);
+    entity.put("fullPathList", List.of(sourceName, normalizedDatabase));
+    entity.put("resourcePath", "/source/" + sourceName + "/folder/" + normalizedDatabase);
+    entity.put("urlPath", "/source/" + sourceName + "/folder/" + normalizedDatabase);
+    entity.put("version", "ch-folder-" + normalizedDatabase);
+    entity.put("tag", "ch-folder-" + normalizedDatabase);
+    entity.put("jobCount", 0);
+    entity.put(
+        "links",
+        Map.of(
+            "self", "/source/" + sourceName + "/folder/" + normalizedDatabase,
+            "format", "/source/" + sourceName + "/folder_format/" + normalizedDatabase,
+            "delete_format", "/source/" + sourceName + "/folder_format/" + normalizedDatabase,
+            "rename", "/source/" + sourceName + "/folder/" + normalizedDatabase));
+    entity.put(
+        "folderFormat",
+        fileFormatEntity(fileFormatRecord("source", sourceName, normalizedDatabase, true)));
+    if (includeContents) {
+      entity.put("contents", clickHouseContents(sourceName, normalizedDatabase));
+    }
+    return entity;
+  }
+
+  private Map<String, Object> clickHousePhysicalDataset(
+      String sourceName, String databaseName, String tableName) {
+    String id = sourceName + "." + databaseName + "." + tableName;
+    List<String> fullPath = List.of(sourceName, databaseName, tableName);
+    Map<String, Object> datasetConfig = new LinkedHashMap<>();
+    datasetConfig.put("id", id);
+    datasetConfig.put("name", tableName);
+    datasetConfig.put("type", "PHYSICAL_DATASET");
+    datasetConfig.put("fullPathList", fullPath);
+
+    Map<String, Object> entity = new LinkedHashMap<>();
+    entity.put("id", id);
+    entity.put("datasetName", tableName);
+    entity.put("jobCount", 0);
+    entity.put("descendants", 0);
+    entity.put("datasetType", "PHYSICAL_DATASET");
+    entity.put("entityType", "physicalDataset");
+    entity.put("resourcePath", "/dataset/" + sourceName + "." + databaseName + "." + tableName);
+    entity.put("fullPathList", fullPath);
+    entity.put("fullPath", fullPath);
+    entity.put(
+        "links",
+        Map.of(
+            "self", "/source/" + sourceName + "/folder/" + databaseName,
+            "query",
+                "/new_query?context="
+                    + sourceName
+                    + "."
+                    + databaseName
+                    + "&sql=SELECT%20*%20FROM%20%22"
+                    + sourceName
+                    + "%22.%22"
+                    + databaseName
+                    + "%22.%22"
+                    + tableName
+                    + "%22%20LIMIT%2050",
+            "edit",
+                "/new_query?context="
+                    + sourceName
+                    + "."
+                    + databaseName
+                    + "&sql=SELECT%20*%20FROM%20%22"
+                    + sourceName
+                    + "%22.%22"
+                    + databaseName
+                    + "%22.%22"
+                    + tableName
+                    + "%22%20LIMIT%2050",
+            "jobs", "/jobs"));
+    entity.put("datasetConfig", datasetConfig);
+    return entity;
+  }
+
+  private Map<String, Object> defaultMetadataPolicy() {
+    return Map.of(
+        "updateMode", "PREFETCH_QUERIED",
+        "namesRefreshMillis", 3600000,
+        "datasetDefinitionRefreshAfterMillis", 3600000,
+        "datasetDefinitionExpireAfterMillis", 10800000,
+        "authTTLMillis", 86400000,
+        "autoPromoteDatasets", true);
+  }
+
+  private SourceListResponse.SourceInfo toSourceInfo(SourceRecord record, boolean includeDatasetCount) {
+    SourceListResponse.SourceInfo source = new SourceListResponse.SourceInfo();
+    source.setType(record.type());
+    source.setName(record.name());
+    source.setCtime(record.createdAt().toEpochMilli());
+    source.setId(record.id());
+    source.setTag(record.tag());
+    source.setResourcePath("/source/" + record.name());
+    source.setFullPathList(List.of(record.name()));
+    source.setLinks(Map.of("self", "/source/" + record.name(), "jobs", "/jobs", "query", "/new_query"));
+    source.setState(Map.of("status", "good", "suggestedUserAction", "", "messages", List.of()));
+    source.setConfig(record.config().isEmpty() ? Map.of("engine", record.type()) : record.config());
+    source.setMetadataPolicy(record.metadataPolicy().isEmpty() ? defaultMetadataPolicy() : record.metadataPolicy());
+    if (includeDatasetCount) {
+      source.setNumberOfDatasets("Samples".equalsIgnoreCase(record.name()) ? 1 : 0);
+    }
+    return source;
+  }
+
+  private SourceRecord defaultSampleSource() {
+    return new SourceRecord(
+        UUID.nameUUIDFromBytes("Samples".getBytes()).toString(),
+        "Samples",
+        "H2",
+        "Datafabric sample source",
+        "datafabric-source-tag",
+        Instant.now().minusSeconds(7200),
+        Map.of("engine", "H2", "rootPath", "/", "allowCrossSourceSelection", false),
+        defaultMetadataPolicy());
+  }
+
+  private SourceRecord findSourceByName(String sourceName) {
+    if ("Samples".equalsIgnoreCase(sourceName)) {
+      return defaultSampleSource();
+    }
+    SourceRecord source = findSourceByNameOrNull(sourceName);
+    if (source == null) {
+      throw new NoSuchElementException("Source not found: " + sourceName);
+    }
+    return source;
+  }
+
+  private SourceRecord findSourceByNameOrNull(String sourceName) {
+    if (sourceName == null) {
+      return null;
+    }
+    return SOURCES_BY_NAME.get(sourceName.toLowerCase());
+  }
+
+  private void ensureSourceNameAvailable(String name, String currentId) {
+    if ("Samples".equalsIgnoreCase(name) && currentId == null) {
+      throw new IllegalArgumentException("A source with this name already exists");
+    }
+    boolean exists =
+        SOURCES.values().stream()
+            .anyMatch(source -> !Objects.equals(source.id(), currentId) && source.name().equalsIgnoreCase(name));
+    if (exists) {
+      throw new IllegalArgumentException("A source with this name already exists");
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> extractMap(Object value) {
+    if (value instanceof Map<?, ?> map) {
+      return new LinkedHashMap<>((Map<String, Object>) map);
+    }
+    return Map.of();
+  }
+
   private Map<String, Object> salesFactDatasetEntity() {
     Map<String, Object> entity = new LinkedHashMap<>();
     entity.put("entityType", "dataset");
@@ -613,6 +1251,282 @@ public class BootstrapService {
             Map.of("name", "amount", "type", Map.of("name", "DOUBLE"), "isPartitioned", false, "isSorted", false)));
     entity.put("schemaOutdated", false);
     return entity;
+  }
+
+  private SpaceRecord requireSpace(String id) {
+    SpaceRecord space = SPACES.get(id);
+    if (space == null) {
+      throw new NoSuchElementException("Catalog entity not found: " + id);
+    }
+    return space;
+  }
+
+  private void ensureSpaceNameAvailable(String name, String currentId) {
+    // 创建和重命名都走同一套名字冲突校验，避免前端刷新列表时出现重复节点。
+    boolean exists =
+        SPACES.values().stream()
+            .anyMatch(space -> !Objects.equals(space.id(), currentId) && space.name().equalsIgnoreCase(name));
+    if (exists) {
+      throw new IllegalArgumentException("A space with this name already exists");
+    }
+  }
+
+  private String normalizeString(Object value) {
+    return value == null ? "" : value.toString().trim();
+  }
+
+  private Map<String, Object> missingCatalogPath(List<String> path) {
+    throw new NoSuchElementException("Catalog path not found: " + path);
+  }
+
+  private Map<String, Object> folderEntity(FolderRecord folder, boolean includeContents) {
+    List<String> fullPathList = new ArrayList<>();
+    fullPathList.add(folder.rootName());
+    if (!folder.relativePath().isBlank()) {
+      fullPathList.addAll(List.of(folder.relativePath().split("/")));
+    }
+    Map<String, Object> entity = new LinkedHashMap<>();
+    entity.put("id", folder.id());
+    entity.put("name", folder.name());
+    entity.put("fileSystemFolder", "source".equals(folder.rootType()));
+    entity.put("file", false);
+    entity.put("queryable", false);
+    entity.put("isPhysicalDataset", false);
+    entity.put("fullPathList", fullPathList);
+    entity.put("resourcePath", folderSelfPath(folder.rootType(), folder.rootName(), folder.relativePath()));
+    entity.put("urlPath", folderSelfPath(folder.rootType(), folder.rootName(), folder.relativePath()));
+    entity.put("version", folder.tag());
+    entity.put("tag", folder.tag());
+    entity.put("jobCount", 0);
+    entity.put("storageUri", folder.storageUri());
+    entity.put(
+        "links",
+        Map.of(
+            "self", folderSelfPath(folder.rootType(), folder.rootName(), folder.relativePath()),
+            "format", formatPath(folder.rootType(), folder.rootName(), folder.relativePath(), true),
+            "delete_format", formatPath(folder.rootType(), folder.rootName(), folder.relativePath(), true),
+            "rename", folderSelfPath(folder.rootType(), folder.rootName(), folder.relativePath())));
+    entity.put(
+        "folderFormat",
+        fileFormatEntity(fileFormatRecord(folder.rootType(), folder.rootName(), folder.relativePath(), true)));
+    if (includeContents) {
+      entity.put("contents", folderContents(folder.rootType(), folder.rootName(), folder.relativePath()));
+    }
+    return entity;
+  }
+
+  private FileFormatRecord fileFormatRecord(
+      String rootType, String rootName, String path, boolean folderFormat) {
+    String key = fileFormatKey(rootType, rootName, path, folderFormat);
+    return FILE_FORMATS.computeIfAbsent(
+        key,
+        ignored ->
+            new FileFormatRecord(
+                UUID.randomUUID().toString(),
+                rootType,
+                rootName,
+                normalizePath(path),
+                folderFormat,
+                "JSON",
+                "format-" + Instant.now().toEpochMilli(),
+                Map.of()));
+  }
+
+  private Map<String, Object> fileFormatEntity(FileFormatRecord format) {
+    List<String> fullPath = new ArrayList<>();
+    fullPath.add(format.rootName());
+    if (!format.relativePath().isBlank()) {
+      fullPath.addAll(List.of(format.relativePath().split("/")));
+    }
+    Map<String, Object> entity = new LinkedHashMap<>(format.payload());
+    entity.put("id", format.id());
+    entity.put("version", format.version());
+    entity.put("type", format.type());
+    entity.put("fullPath", fullPath);
+    entity.put("location", String.join("/", fullPath));
+    entity.put(
+        "links",
+        Map.of("self", formatPath(format.rootType(), format.rootName(), format.relativePath(), format.folderFormat())));
+    return entity;
+  }
+
+  private FolderRecord requireFolder(String rootType, String rootName, String path) {
+    validateRoot(rootType, rootName);
+    FolderRecord folder = FOLDERS.get(folderKey(rootType, rootName, path));
+    if (folder == null) {
+      throw new NoSuchElementException("Folder not found: " + normalizePath(path));
+    }
+    return folder;
+  }
+
+  private void validateRoot(String rootType, String rootName) {
+    switch (rootType) {
+      case "source" -> findSourceByName(rootName);
+      case "space" ->
+          SPACES.values().stream()
+              .filter(item -> item.name().equalsIgnoreCase(rootName))
+              .findFirst()
+              .orElseThrow(() -> new NoSuchElementException("Space not found: " + rootName));
+      case "home" -> getHome(rootName, false);
+      default -> throw new IllegalArgumentException("Unsupported root type: " + rootType);
+    }
+  }
+
+  private void renameFolderTree(
+      FolderRecord existing, String nextRelativePath, String nextName, String nextStorageUri) {
+    String oldPrefix = existing.relativePath();
+    List<FolderRecord> affected =
+        FOLDERS.values().stream()
+            .filter(folder -> folder.rootType().equals(existing.rootType()))
+            .filter(folder -> folder.rootName().equalsIgnoreCase(existing.rootName()))
+            .filter(
+                folder ->
+                    folder.relativePath().equals(oldPrefix)
+                        || folder.relativePath().startsWith(oldPrefix + "/"))
+            .toList();
+    for (FolderRecord folder : affected) {
+      FOLDERS.remove(folderKey(folder.rootType(), folder.rootName(), folder.relativePath()));
+    }
+    for (FolderRecord folder : affected) {
+      String suffix =
+          folder.relativePath().equals(oldPrefix)
+              ? ""
+              : folder.relativePath().substring(oldPrefix.length());
+      String rewritten = nextRelativePath + suffix;
+      String rewrittenName = folder.relativePath().equals(oldPrefix) ? nextName : leafName(rewritten);
+      String storageUri = folder.relativePath().equals(oldPrefix) ? nextStorageUri : folder.storageUri();
+      FOLDERS.put(
+          folderKey(folder.rootType(), folder.rootName(), rewritten),
+          new FolderRecord(
+              folder.id(),
+              folder.rootType(),
+              folder.rootName(),
+              rewritten,
+              rewrittenName,
+              "folder-" + Instant.now().toEpochMilli(),
+              folder.createdAt(),
+              storageUri));
+    }
+  }
+
+  private String folderKey(String rootType, String rootName, String path) {
+    return rootType + "|" + rootName.toLowerCase() + "|" + normalizePath(path);
+  }
+
+  private String fileFormatKey(String rootType, String rootName, String path, boolean folderFormat) {
+    return rootType
+        + "|"
+        + rootName.toLowerCase()
+        + "|"
+        + (folderFormat ? "folder" : "file")
+        + "|"
+        + normalizePath(path);
+  }
+
+  private String normalizePath(String path) {
+    if (path == null) {
+      return "";
+    }
+    String normalized = path.trim();
+    while (normalized.startsWith("/")) {
+      normalized = normalized.substring(1);
+    }
+    while (normalized.endsWith("/")) {
+      normalized = normalized.substring(0, normalized.length() - 1);
+    }
+    return normalized;
+  }
+
+  private String parentPath(String path) {
+    String normalized = normalizePath(path);
+    int index = normalized.lastIndexOf('/');
+    return index < 0 ? "" : normalized.substring(0, index);
+  }
+
+  private String leafName(String path) {
+    String normalized = normalizePath(path);
+    int index = normalized.lastIndexOf('/');
+    return index < 0 ? normalized : normalized.substring(index + 1);
+  }
+
+  private String folderSelfPath(String rootType, String rootName, String path) {
+    String normalized = normalizePath(path);
+    return normalized.isBlank()
+        ? "/" + rootType + "/" + rootName + "/folder/"
+        : "/" + rootType + "/" + rootName + "/folder/" + normalized;
+  }
+
+  private String formatPath(String rootType, String rootName, String path, boolean folderFormat) {
+    String normalized = normalizePath(path);
+    String prefix = folderFormat ? "folder_format" : "file_format";
+    return normalized.isBlank()
+        ? "/" + rootType + "/" + rootName + "/" + prefix
+        : "/" + rootType + "/" + rootName + "/" + prefix + "/" + normalized;
+  }
+
+  private Map<String, Object> mergeMaps(Map<String, Object> existing, Map<String, Object> updates) {
+    Map<String, Object> merged = new LinkedHashMap<>(existing);
+    merged.putAll(updates);
+    return merged;
+  }
+
+  private record SpaceRecord(String id, String name, String description, String tag, Instant createdAt) {}
+
+  private record SourceRecord(
+      String id,
+      String name,
+      String type,
+      String description,
+      String tag,
+      Instant createdAt,
+      Map<String, Object> config,
+      Map<String, Object> metadataPolicy) {}
+
+  private record FolderRecord(
+      String id,
+      String rootType,
+      String rootName,
+      String relativePath,
+      String name,
+      String tag,
+      Instant createdAt,
+      String storageUri) {}
+
+  private record FileFormatRecord(
+      String id,
+      String rootType,
+      String rootName,
+      String relativePath,
+      boolean folderFormat,
+      String type,
+      String version,
+      Map<String, Object> payload) {}
+
+  private void savePersistedSource(SourceRecord source) {
+    try {
+      Files.createDirectories(sourceStoreDir());
+      objectMapper.writeValue(sourceStoreDir().resolve(source.name().toLowerCase() + ".json").toFile(), source);
+    } catch (IOException ex) {
+      throw new IllegalStateException("Failed to persist source: " + source.name(), ex);
+    }
+  }
+
+  private Path sourceStoreDir() {
+    return properties.getBaseDir().resolve("sources");
+  }
+
+  private void deletePersistedSource(String sourceName) {
+    try {
+      Files.deleteIfExists(sourceStoreDir().resolve(sourceName.toLowerCase() + ".json"));
+    } catch (IOException ex) {
+      throw new IllegalStateException("Failed to delete persisted source: " + sourceName, ex);
+    }
+  }
+
+  private List<Path> listSourceFiles() throws IOException {
+    try (var stream = Files.list(sourceStoreDir())) {
+      return stream.filter(path -> path.getFileName().toString().endsWith(".json")).sorted().toList();
+    }
   }
 
   private SourceTypeTemplateResponse sourceType(

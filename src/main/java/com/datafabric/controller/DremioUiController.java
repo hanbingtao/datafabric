@@ -36,10 +36,22 @@ public class DremioUiController {
     if (uri.startsWith("/api") || uri.startsWith("/apiv2") || uri.startsWith("/api/v")) {
       throw new ResponseStatusException(HttpStatus.NOT_FOUND, "API endpoint not implemented: " + uri);
     }
-    Path indexFile =
-        Path.of(properties.getUi().getDremioBuildDir()).resolve("index.html").toAbsolutePath().normalize();
+    Path indexFile = resolveUiIndexFile();
+    // 本地仅启动后端时，允许前端构建产物缺失，并回退到说明页。
+    if (!Files.exists(indexFile)) {
+      return ResponseEntity.ok()
+          .contentType(MediaType.TEXT_HTML)
+          .body(localFallbackPage(indexFile));
+    }
     String html = Files.readString(indexFile, StandardCharsets.UTF_8);
     return ResponseEntity.ok().contentType(MediaType.TEXT_HTML).body(injectConfig(html));
+  }
+
+  private Path resolveUiIndexFile() {
+    return Path.of(properties.getUi().getDremioBuildDir())
+        .resolve("index.html")
+        .toAbsolutePath()
+        .normalize();
   }
 
   private String injectConfig(String html) throws JsonProcessingException {
@@ -130,6 +142,7 @@ public class DremioUiController {
           (function() {
             const NativeWebSocket = window.WebSocket;
             if (!NativeWebSocket) return;
+            // Dremio UI 依赖 websocket 推送 job 进度，这里用 HTTP 轮询结果做最小兼容。
             class DatafabricSocketCompat {
               constructor(url) {
                 this.url = url;
@@ -291,5 +304,81 @@ public class DremioUiController {
     config.put("analyzeTools", Map.of("tableau", Map.of("enabled", false), "powerbi", Map.of("enabled", false)));
     config.putAll(properties.getUi().getDremioConfig());
     return config;
+  }
+
+  private String localFallbackPage(Path indexFile) {
+    return """
+        <!DOCTYPE html>
+        <html lang="zh-CN">
+        <head>
+          <meta charset="UTF-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+          <title>DataFabric Local</title>
+          <style>
+            :root {
+              --bg: #f5f7fb;
+              --panel: #ffffff;
+              --text: #122033;
+              --muted: #617285;
+              --line: #d8e1ec;
+              --accent: #0f62fe;
+            }
+            * { box-sizing: border-box; }
+            body {
+              margin: 0;
+              font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+              color: var(--text);
+              background: linear-gradient(180deg, #edf4ff 0%%, var(--bg) 100%%);
+            }
+            main {
+              max-width: 860px;
+              margin: 48px auto;
+              padding: 0 20px;
+            }
+            section {
+              background: var(--panel);
+              border: 1px solid var(--line);
+              border-radius: 20px;
+              padding: 28px;
+              box-shadow: 0 16px 40px rgba(18, 32, 51, 0.08);
+            }
+            h1 { margin: 0 0 12px; font-size: 30px; }
+            p { margin: 12px 0; line-height: 1.6; color: var(--muted); }
+            code {
+              background: #f2f5f8;
+              border-radius: 6px;
+              padding: 2px 6px;
+              word-break: break-all;
+            }
+            ul { padding-left: 20px; }
+            li { margin: 10px 0; line-height: 1.6; color: var(--muted); }
+            a { color: var(--accent); text-decoration: none; }
+          </style>
+        </head>
+        <body>
+          <main>
+            <section>
+              <h1>DataFabric 已启动</h1>
+              <p>后端服务运行正常，但当前本地没有找到 Dremio UI 的构建产物，所以首页回退到了提示页，而不是完整前端界面。</p>
+              <p>期望的 UI 文件位置是：<code>%s</code></p>
+              <ul>
+                <li>如果你只想验证后端，可以先访问 <a href="/apiv2/server_status">/apiv2/server_status</a>、<a href="/api/v1/metadata/datasets">/api/v1/metadata/datasets</a>、<a href="/api/v3/catalog">/api/v3/catalog</a>。</li>
+                <li>如果你需要完整 UI，把前端构建结果放到这个目录，或者把 <code>datafabric.ui.dremio-build-dir</code> 改成正确的 build 目录。</li>
+              </ul>
+            </section>
+          </main>
+        </body>
+        </html>
+        """
+        .formatted(escapeHtml(indexFile.toString()));
+  }
+
+  private String escapeHtml(String value) {
+    return value
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
+        .replace("'", "&#39;");
   }
 }

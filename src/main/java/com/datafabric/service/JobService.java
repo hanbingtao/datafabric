@@ -73,6 +73,8 @@ public class JobService {
   }
 
   public JobDataResponse getJobData(String jobId, int offset, int limit) throws IOException {
+    // 分页参数先兜住，避免负数下标把接口直接打成 500。
+    validatePagination(offset, limit);
     JobRecord job = getJob(jobId);
     if (job.getStatus() != JobStatus.COMPLETED) {
       throw new IllegalStateException("Job is not completed. Current status: " + job.getStatus());
@@ -130,6 +132,7 @@ public class JobService {
     job.setStatus(JobStatus.RUNNING);
     job.setStartedAt(Instant.now());
     try {
+      // 查询结果落盘后，job/data 接口再按 offset/limit 做分页读取。
       QueryExecutionService.QueryResult result = queryExecutionService.execute(job.getSql());
       Path saved = localResultStore.saveJobResult(job.getId(), result.columns(), result.rows());
       job.setRowCount((long) result.rows().size());
@@ -157,5 +160,14 @@ public class JobService {
 
   private String nullToEmpty(String value) {
     return value == null ? "" : value;
+  }
+
+  private void validatePagination(int offset, int limit) {
+    if (offset < 0) {
+      throw new IllegalArgumentException("offset must be greater than or equal to 0");
+    }
+    if (limit <= 0) {
+      throw new IllegalArgumentException("limit must be greater than 0");
+    }
   }
 }

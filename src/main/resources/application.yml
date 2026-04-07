@@ -1,5 +1,5 @@
 server:
-  port: 39047
+  port: 59047
 
 spring:
   application:
@@ -16,7 +16,7 @@ spring:
 datafabric:
   base-dir: ./runtime
   ui:
-    dremio-build-dir: ../dac/ui/build
+    dremio-build-dir: ./frontend/dremio-ui/build
   reflection:
     max-count: 500
     max-count-enabled: true
