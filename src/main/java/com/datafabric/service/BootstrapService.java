@@ -58,18 +58,21 @@ public class BootstrapService {
   private final ClickHouseSourceService clickHouseSourceService;
   private final DatafabricProperties properties;
   private final ObjectMapper objectMapper;
+  private final UserPreferenceService userPreferenceService;
 
   public BootstrapService(
       JobService jobService,
       MetadataService metadataService,
       ClickHouseSourceService clickHouseSourceService,
       DatafabricProperties properties,
-      ObjectMapper objectMapper) {
+      ObjectMapper objectMapper,
+      UserPreferenceService userPreferenceService) {
     this.jobService = jobService;
     this.metadataService = metadataService;
     this.clickHouseSourceService = clickHouseSourceService;
     this.properties = properties;
     this.objectMapper = objectMapper;
+    this.userPreferenceService = userPreferenceService;
   }
 
   @PostConstruct
@@ -797,15 +800,15 @@ public class BootstrapService {
   }
 
   public UserPreferenceResponse getPreference(String preferenceType, boolean showCatalogInfo) {
-    return new UserPreferenceResponse(preferenceType, List.of());
+    return userPreferenceService.getPreference(preferenceType, showCatalogInfo);
   }
 
   public UserPreferenceResponse addPreference(String preferenceType, String entityId) {
-    return new UserPreferenceResponse(preferenceType, List.of(Map.of("id", entityId)));
+    return userPreferenceService.addPreference(preferenceType, entityId);
   }
 
   public UserPreferenceResponse removePreference(String preferenceType, String entityId) {
-    return new UserPreferenceResponse(preferenceType, List.of());
+    return userPreferenceService.removePreference(preferenceType, entityId);
   }
 
   public CollaborationWikiResponse getWiki(String id) {

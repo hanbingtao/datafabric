@@ -51,7 +51,11 @@ public class ErrorControllerAdvice {
   @ExceptionHandler(Exception.class)
   @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
   public Map<String, Object> handleGeneric(Exception ex) {
-    return error("INTERNAL_ERROR", ex.getMessage());
+    String message = ex.getMessage() + " [" + ex.getClass().getName() + "]";
+    if (ex.getCause() != null) {
+      message += " <- " + ex.getCause().getMessage();
+    }
+    return error("INTERNAL_ERROR", message);
   }
 
   private Map<String, Object> error(String code, String message) {
