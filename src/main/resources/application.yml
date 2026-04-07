@@ -1,0 +1,23 @@
+server:
+  port: 39047
+
+spring:
+  application:
+    name: datafabric
+  mvc:
+    pathmatch:
+      matching-strategy: ant_path_matcher
+  datasource:
+    url: jdbc:h2:file:./runtime/db/datafabric;AUTO_SERVER=TRUE;MODE=PostgreSQL
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+datafabric:
+  base-dir: ./runtime
+  ui:
+    dremio-build-dir: ../dac/ui/build
+  reflection:
+    max-count: 500
+    max-count-enabled: true
+    scheduler-delay: PT30S
