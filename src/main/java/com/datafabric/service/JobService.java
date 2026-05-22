@@ -1,6 +1,7 @@
 package com.datafabric.service;
 
 import com.datafabric.dto.JobDataResponse;
+import com.datafabric.dto.DremioJobResultsResponse;
 import com.datafabric.model.JobRecord;
 import com.datafabric.model.JobStatus;
 import com.datafabric.storage.LocalResultStore;
@@ -80,6 +81,19 @@ public class JobService {
       throw new IllegalStateException("Job is not completed. Current status: " + job.getStatus());
     }
     return localResultStore.readJobResult(job.getResultPath(), offset, limit);
+  }
+
+  public DremioJobResultsResponse getDremioJobResults(String jobId, int offset, int limit)
+      throws IOException {
+    validateDremioResultsPagination(offset, limit);
+    JobDataResponse data = getJobData(jobId, offset, limit);
+    DremioJobResultsResponse response = new DremioJobResultsResponse();
+    response.setRowCount(data.getTotal());
+    response.setSchema(data.getColumns().stream()
+        .map(column -> Map.<String, Object>of("name", column, "type", Map.of("name", "ANY")))
+        .toList());
+    response.setRows(data.getRows());
+    return response;
   }
 
   public Map<String, Object> getJobSummary(String jobId, int maxSqlLength) {
@@ -168,6 +182,13 @@ public class JobService {
     }
     if (limit <= 0) {
       throw new IllegalArgumentException("limit must be greater than 0");
+    }
+  }
+
+  private void validateDremioResultsPagination(int offset, int limit) {
+    validatePagination(offset, limit);
+    if (limit > 500) {
+      throw new IllegalArgumentException("limit must be less than or equal to 500");
     }
   }
 }

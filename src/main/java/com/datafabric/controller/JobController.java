@@ -1,5 +1,6 @@
 package com.datafabric.controller;
 
+import com.datafabric.dto.DremioJobResultsResponse;
 import com.datafabric.dto.JobDataResponse;
 import com.datafabric.model.JobRecord;
 import com.datafabric.service.JobService;
@@ -13,7 +14,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@RequestMapping({"/api/v2/job", "/apiv2/job"})
+@RequestMapping({"/api/v2/job", "/apiv2/job", "/api/v3/job"})
 public class JobController {
   private final JobService jobService;
 
@@ -49,6 +50,15 @@ public class JobController {
       @RequestParam(defaultValue = "100") int limit)
       throws IOException {
     return jobService.getJobData(jobId, offset, limit);
+  }
+
+  @GetMapping("/{jobId}/results")
+  public DremioJobResultsResponse getJobResults(
+      @PathVariable String jobId,
+      @RequestParam(defaultValue = "0") int offset,
+      @RequestParam(defaultValue = "100") int limit)
+      throws IOException {
+    return jobService.getDremioJobResults(jobId, offset, limit);
   }
 
   @PostMapping("/{jobId}/cancel")
